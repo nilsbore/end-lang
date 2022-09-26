@@ -1,4 +1,4 @@
-# Ends with End statement or end of file
+# ends with End statement or end of file
 begin namespace Examples1
 
 def answer: i32 = 42
