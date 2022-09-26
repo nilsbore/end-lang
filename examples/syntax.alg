@@ -1,4 +1,7 @@
-# Ends with End statement or end of file
+# import a library
+import file
+
+# ends with End statement or end of file
 begin namespace Examples1
 
 def answer: i32 = 42
