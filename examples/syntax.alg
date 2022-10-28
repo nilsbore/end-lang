@@ -12,11 +12,11 @@ def times(a: T, b: T) -> T for T: type =
 def mmul(a: tensor<T, M, N>, b: tensor<T, N, L>) -> tensor<T, M, L> for T: type, L, M, N: size =
     let C : tensor<T, M, L> = tensor<T, M, L>. zeros()
     for i in range(0, N):
-        ...
+        pass
     return C
 
-def mmul(a: [M, N: T], b: [N, L: T]) -> [M, L: T] for T: type, L, M, N: size =
-    ...
+#def mmul(a: [M, N: T], b: [N, L: T]) -> [M, L: T] for T: type, L, M, N: size =
+#    pass
 
 end namespace Examples1
 
@@ -46,14 +46,14 @@ let v: Vec3<f32> = Vec3(x=1, y=2, z=3)
 # identical to
 let v: Vec3 of f32 = Vec3(x=1, y=2, z=3)
 
-let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
+#let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
 
 let one = Vec3<f32>.ones()
 
 def trait Print for T: type =
     print: (T) -> ()
 
-def trait Add for T: type =
+def trait Add for T: type = # this is all good
     add: (T, T) -> T
 
 def impl Add for i32 =
