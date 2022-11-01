@@ -9,8 +9,8 @@ def answer: i32 = 42
 def times(a: T, b: T) -> T for T: type =
     a * b
 
-def mmul(a: tensor<T, M, N>, b: tensor<T, N, L>) -> tensor<T, M, L> for T: type, L, M, N: size =
-    let C : tensor<T, M, L> = tensor<T, M, L>. zeros()
+def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type, L, M, N: size =
+    let C : tensor[T, M, L] = tensor[T, M, L].zeros()
     for i in range(0, N):
         pass
     return C
@@ -42,13 +42,13 @@ def isEmpty(v: Option of i32) -> bool =
     | None => False
     | Some _ => True    
 
-let v: Vec3<f32> = Vec3(x=1, y=2, z=3)
+let v: Vec3[f32] = Vec3(x=1, y=2, z=3)
 # identical to
 let v: Vec3 of f32 = Vec3(x=1, y=2, z=3)
 
 #let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
 
-let one = Vec3<f32>.ones()
+let one = Vec3[f32].ones()
 
 def trait Print for T: type =
     print: (T) -> ()
