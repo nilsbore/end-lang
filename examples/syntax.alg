@@ -15,7 +15,7 @@ def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type,
         pass
     return C
 
-#def mmul(a: [M, N: T], b: [N, L: T]) -> [M, L: T] for T: type, L, M, N: size =
+#TODO: def mmul(a: [M, N: T], b: [N, L: T]) -> [M, L: T] for T: type, L, M, N: size =
 #    pass
 
 end namespace Examples1
@@ -46,7 +46,7 @@ let v: Vec3[f32] = Vec3(x=1, y=2, z=3)
 # identical to
 let v: Vec3 of f32 = Vec3(x=1, y=2, z=3)
 
-#let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
+# TODO: let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
 
 let one = Vec3[f32].ones()
 
@@ -60,7 +60,7 @@ def impl Add for i32 =
     def add(a: i32, b: i32) =
         a + b
 
-let f = fn x => x + 1
+# TODO: let f = fn x => x + 1
 let g = fn(x: i32) => x + 1
 
 # return last expression is disabled in void functions
