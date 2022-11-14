@@ -1,5 +1,6 @@
 use chumsky::{prelude::*, BoxStream, Flat};
 use crate::utils::*;
+use std::fmt;
 
 // Represents the different kinds of delimiters we care about
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
@@ -8,6 +9,17 @@ pub enum Delim {
     SquareBrackets,
     CurlyBrackets,
     Block,
+}
+
+impl fmt::Display for Delim {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Delim::Paren => write!(f, "()"),
+            Delim::SquareBrackets => write!(f, "[]"),
+            Delim::CurlyBrackets => write!(f, "{{}}"),
+            Delim::Block => write!(f, "--"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -27,6 +39,31 @@ pub enum Op {
     Dot,
     RArrow,
     RFlow,
+}
+
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Op::Add => write!(f, "+"),
+            Op::Sub => write!(f, "-"),
+            Op::Mul => write!(f, "*"),
+            Op::Div => write!(f, "/"),
+            Op::Rem => write!(f, "%"),
+            Op::Eq => write!(f, "=="),
+            Op::NotEq => write!(f, "!="),
+            Op::Less => write!(f, "<"),
+            Op::LessEq => write!(f, "<="),
+            Op::More => write!(f, ">"),
+            Op::MoreEq => write!(f, ">="),
+            Op::Not => write!(f, "!"),
+            Op::And => write!(f, "&&"),
+            Op::Or => write!(f, "||"),
+            Op::Xor => write!(f, "|"),
+            Op::Dot => write!(f, "."),
+            Op::RArrow => write!(f, "->"),
+            Op::RFlow => write!(f, "=>"),
+        }
+    }
 }
 
 // An 'atomic' token (i.e: it has no child tokens)
@@ -60,6 +97,41 @@ pub enum Token {
     Enum,
     Block,
     Wildcard,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Token::Assign => write!(f, "="),
+            Token::Comma => write!(f, ","),
+            Token::Colon => write!(f, ":"),
+            Token::Pipe => write!(f, "|"),
+            Token::Int(n) => write!(f, "{}", n),
+            Token::Ident(s) => write!(f, "{}", s),
+            Token::Op(s) => write!(f, "{}", s),
+            Token::Open(d) => write!(f, "Open {}", d),
+            Token::Close(d) => write!(f, "Close {}", d),
+            Token::Str(s) => write!(f, "{}", s),
+            Token::Bool(x) => write!(f, "{}", x),
+            Token::Fn => write!(f, "fn"),
+            Token::Def => write!(f, "def"),
+            Token::Trait => write!(f, "trait"),
+            Token::Let => write!(f, "let"),
+            Token::Of => write!(f, "of"),
+            Token::For => write!(f, "for"),
+            Token::If => write!(f, "if"),
+            Token::Else => write!(f, "else"),
+            Token::While => write!(f, "while"),
+            Token::Impl => write!(f, "impl"),
+            Token::Begin => write!(f, "begin"),
+            Token::End => write!(f, "end"),
+            Token::Namespace => write!(f, "namespace"),
+            Token::Struct => write!(f, "struct"),
+            Token::Enum => write!(f, "enum"),
+            Token::Block => write!(f, "block"),
+            Token::Wildcard => write!(f, "_"),
+        }
+    }
 }
 
 // The output of the lexer: a recursive tree of nested tokens

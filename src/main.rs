@@ -1,5 +1,6 @@
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
+use chumsky::stream::Stream;
 use std::{env, fs};
 
 mod utils;
@@ -7,15 +8,16 @@ mod lexer;
 mod ast;
 mod parser;
 use crate::lexer::{lexer, tts_to_stream};
+use crate::parser::expr_parser;
 
 fn main() {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
             .expect("Failed to read file");
 
-    let (tts, errs) = lexer().parse_recovery(src.as_str());
+    let (tts, mut errs) = lexer().parse_recovery(src.as_str());
 
-    if let Some(tts) = tts {
-        println!("--- Token Trees ---\n{:#?}", tts);
+    let parse_errs = if let Some(tts) = tts {
+        //println!("--- Token Trees ---\n{:#?}", tts);
 
         // Next, flatten
         let eoi = 0..src.chars().count();
@@ -24,14 +26,22 @@ fn main() {
         // At this point, we have a token stream that can be fed into the main parser! Because this is just an example,
         // we're instead going to just collect the token stream into a vector and print it.
 
-        let flattened_trees = token_stream.fetch_tokens().collect::<Vec<_>>();
+        //let flattened_trees = token_stream.fetch_tokens().collect::<Vec<_>>();
 
-        println!("--- Flattened Token Trees ---\n{:?}", flattened_trees);
+        //println!("--- Flattened Token Trees ---\n{:?}", flattened_trees);
+
+        //let len = src.chars().count();
+        let (ast, parse_errs) =
+            expr_parser().parse_recovery(token_stream);
+        parse_errs
     }
+    else {
+        Vec::new()
+    };
 
     errs.into_iter()
         .map(|e| e.map(|c| c.to_string()))
-        //.chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
+        .chain(parse_errs.into_iter().map(|e| e.map(|tok| tok.to_string())))
         .for_each(|e| {
             let report = Report::build(ReportKind::Error, (), e.span().start);
 

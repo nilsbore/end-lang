@@ -1,9 +1,9 @@
-use chumsky::{prelude::*, BoxStream, Flat};
+use chumsky::prelude::*; //{prelude::*, BoxStream, Flat};
 use crate::utils::*;
 use crate::ast::*;
 use crate::lexer::*;
 
-fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
+pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
     recursive(|expr| {
         let val = select! {
             //Token::Null => Expr::Value(Value::Null),
@@ -59,7 +59,7 @@ fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + C
 }
 
 /*
-fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
+pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
