@@ -81,7 +81,7 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Func {
-    pub name: String, //SrcNode<Ident>,
+    pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,
     //pub ty_hint: SrcNode<Type>,
     pub args: Vec<String>,

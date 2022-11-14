@@ -8,7 +8,7 @@ mod lexer;
 mod ast;
 mod parser;
 use crate::lexer::{lexer, tts_to_stream};
-use crate::parser::expr_parser;
+use crate::parser::funcs_parser;
 
 fn main() {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
@@ -32,7 +32,7 @@ fn main() {
 
         //let len = src.chars().count();
         let (ast, parse_errs) =
-            expr_parser().parse_recovery(token_stream);
+            funcs_parser().parse_recovery(token_stream);
         parse_errs
     }
     else {

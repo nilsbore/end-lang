@@ -58,7 +58,6 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
     })
 }
 
-/*
 pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
@@ -73,17 +72,24 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
         .delimited_by(just(Token::Open(Delim::Paren)), just(Token::Close(Delim::Paren)))
         .labelled("function args");
 
-    let func = just(Token::Fn)
+    let func = just(Token::Def)
         .ignore_then(
             ident
                 .map_with_span(|name, span| (name, span))
                 .labelled("function name"),
         )
         .then(args)
-        .then(just(Token::Assign)) //.padded()
-        .ignore_then(
+        .then_ignore(just(Token::Op(Op::RArrow)))
+        .then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("function name"),
+        )
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        .then(
             expr_parser()
-            .repeated()
+            //.repeated()
             .delimited_by(just(Token::Open(Delim::Block)), just(Token::Close(Delim::Block)))
                 // Attempt to recover anything that looks like a function body but contains errors
                 .recover_with(nested_delimiters(
@@ -97,9 +103,8 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
                     |span| (Expr::Error, span),
                 )),
         )
-        .map(|((name, args), body)| Func {name, args, body})
+        .map(|(((name, args), rtn), body)| Func {name:name, args:args, body:vec![body]})
         .labelled("function");
 
     func
 }
-*/
