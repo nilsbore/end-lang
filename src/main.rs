@@ -2,7 +2,10 @@ use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
 use std::{env, fs};
 
+mod utils;
 mod lexer;
+mod ast;
+mod parser;
 use crate::lexer::{lexer, tts_to_stream};
 
 fn main() {

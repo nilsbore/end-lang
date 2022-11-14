@@ -1,8 +1,8 @@
 use chumsky::{prelude::*, BoxStream, Flat};
-use std::ops::Range;
+use crate::utils::*;
 
 // Represents the different kinds of delimiters we care about
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Delim {
     Paren,
     SquareBrackets,
@@ -10,7 +10,7 @@ pub enum Delim {
     Block,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Op {
     // Sum
     Add, Sub,
@@ -30,8 +30,9 @@ pub enum Op {
 }
 
 // An 'atomic' token (i.e: it has no child tokens)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Token {
+    Assign,
     Comma,
     Colon,
     Pipe,
@@ -67,10 +68,6 @@ pub enum TokenTree {
     Token(Token),
     Tree(Delim, Vec<Spanned<TokenTree>>),
 }
-
-pub type Span = Range<usize>;
-
-pub type Spanned<T> = (T, Span);
 
 // A parser that turns pythonic code with semantic whitespace into a token tree
 pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char>> {
@@ -112,6 +109,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
             just(',').to(Token::Comma),
             just(':').to(Token::Colon),
             just('|').to(Token::Pipe),
+            just('=').to(Token::Assign),
         ));
 
         /*
@@ -124,7 +122,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
 
         let op = choice((
             just("=>").to(Op::RFlow),
-            just('=').to(Op::Eq),
+            just("==").to(Op::Eq),
             just('.').to(Op::Dot),
             just("!=").to(Op::NotEq),
             just('!').to(Op::Not),
