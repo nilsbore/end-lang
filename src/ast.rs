@@ -41,7 +41,7 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum Value {
+pub enum Literal {
     Bool(bool),
     Nat(u64),
     Int(i64),
@@ -51,24 +51,30 @@ pub enum Value {
 }
 
 /*
+#[derive(Debug, PartialEq)]
+pub struct GenericTy {
+    pub Spanned<String>
+}
+*/
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     // Generated only by parser errors.
     Error,
     Unknown,
-    List(SrcNode<Self>),
-    Dict(SrcNode<Self>, SrcNode<Self>),
-    Tuple(Vec<SrcNode<Self>>),
-    Func(Vec<SrcNode<Self>>, SrcNode<Self>),
-    Struct(SrcNode<Ident>, Vec<SrcNode<Self>>),
+    //Named(String),
+    Named(String, Vec<Spanned<Self>>),
+    List(Box<Spanned<Self>>),
+    Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    Tuple(Vec<Spanned<Self>>),
+    Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
 }
-*/
 
 // An expression node in the AST. Children are spanned so we can generate useful runtime errors.
 #[derive(Debug)]
 pub enum Expr {
     Error,
-    Value(Value),
+    Literal(Literal),
     List(Vec<Spanned<Self>>),
     Local(String),
     Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>),
@@ -80,11 +86,18 @@ pub enum Expr {
 }
 
 #[derive(Debug)]
+pub struct Item {
+    pub name: String,
+    pub ty: Spanned<Type>,
+}
+
+#[derive(Debug)]
 pub struct Func {
     pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,
     //pub ty_hint: SrcNode<Type>,
-    pub args: Vec<String>,
+    pub args: Vec<Item>,
+    pub rtn: Spanned<Type>,
     //body: Spanned<Expr>,
     pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
 }

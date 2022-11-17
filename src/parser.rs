@@ -7,9 +7,9 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
     recursive(|expr| {
         let val = select! {
             //Token::Null => Expr::Value(Value::Null),
-            Token::Bool(x) => Expr::Value(Value::Bool(x)),
-            Token::Int(n) => Expr::Value(Value::Nat(n)),
-            Token::Str(s) => Expr::Value(Value::Str(s)),
+            Token::Bool(x) => Expr::Literal(Literal::Bool(x)),
+            Token::Int(n) => Expr::Literal(Literal::Nat(n)),
+            Token::Str(s) => Expr::Literal(Literal::Str(s)),
         }
         .labelled("value");
 
@@ -58,14 +58,54 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
     })
 }
 
+pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
+    recursive(|type_| {
+        let ident = filter_map(|span, tok| match tok {
+            Token::Ident(ident) => Ok(ident.clone()),
+            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+        });
+
+        let generic_args = type_
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(just(Token::Open(Delim::SquareBrackets)), just(Token::Close(Delim::SquareBrackets)));
+                        // Attempt to recover anything that looks like a function body but contains errors
+                        /*
+                        .recover_with(nested_delimiters(
+                            Token::Open(Delim::SquareBrackets),
+                            Token::Close(Delim::SquareBrackets),
+                            [
+                                (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                                (Token::Open(Delim::Block), Token::Close(Delim::Block)),
+                                (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                            ],
+                            |span| vec![(Type::Error, span)],
+                        ))
+                        */
+
+
+        ident.then(generic_args.or_not())
+        //.ok_or_else(|| Vec::new())
+        .map_with_span(|(name, generic_args), span: Span| {
+            match generic_args {
+                Some(args) => (Type::Named(name, args), span.clone()),
+                None => (Type::Named(name, Vec::new()), span.clone()),
+            }
+        })
+        .labelled("type")
+    })
+}
+
 pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
     });
 
+    let item = ident.clone().then_ignore(just(Token::Colon)).then(type_parser()).map(|(name, ty)| Item {name, ty});
+
     // Argument lists are just identifiers separated by commas, surrounded by parentheses
-    let args = ident
+    let args = item //ident
         .clone()
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -80,11 +120,13 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
         )
         .then(args)
         .then_ignore(just(Token::Op(Op::RArrow)))
-        .then(
+        .then(type_parser())
+        /*
             ident
                 .map_with_span(|name, span| (name, span))
-                .labelled("function name"),
+                .labelled("function return type"),
         )
+        */
         .then_ignore(just(Token::Assign))
         //.then(just(Token::Assign)) //.padded()
         .then(
@@ -103,7 +145,7 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
                     |span| (Expr::Error, span),
                 )),
         )
-        .map(|(((name, args), rtn), body)| Func {name:name, args:args, body:vec![body]})
+        .map(|(((name, args), rtn), body)| Func {name:name, args:args, rtn: rtn, body:vec![body]})
         .labelled("function");
 
     func

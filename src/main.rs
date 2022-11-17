@@ -8,7 +8,7 @@ mod lexer;
 mod ast;
 mod parser;
 use crate::lexer::{lexer, tts_to_stream};
-use crate::parser::funcs_parser;
+use crate::parser::{expr_parser, funcs_parser, type_parser};
 
 fn main() {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
