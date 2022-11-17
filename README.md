@@ -7,3 +7,5 @@ The alg programming language
 * [Lean4](https://leanprover.github.io/)
 * [nim](https://nim-lang.org/)
 * [rust](https://www.rust-lang.org/)
+* [jakt](https://github.com/SerenityOS/jakt)
+* [tao](https://github.com/zesterer/tao)
