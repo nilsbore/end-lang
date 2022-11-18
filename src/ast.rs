@@ -92,6 +92,12 @@ pub struct Item {
 }
 
 #[derive(Debug)]
+pub struct Struct {
+    pub name: Spanned<String>,
+    pub members: Vec<Item>,
+}
+
+#[derive(Debug)]
 pub struct Func {
     pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,

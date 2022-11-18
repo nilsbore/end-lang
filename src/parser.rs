@@ -58,6 +58,46 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
     })
 }
 
+pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let item = ident.clone().then_ignore(just(Token::Colon)).then(type_parser()).map(|(name, ty)| Item {name, ty});
+
+    let struct_ = just(Token::Def)
+        .ignore_then(just(Token::Struct))
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("function name"),
+        )
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        //.then(item.repeated())
+        .then(item
+            .repeated()
+            .delimited_by(just(Token::Open(Delim::Block)), just(Token::Close(Delim::Block)))
+                /*
+                .recover_with(nested_delimiters(
+                    Token::Open(Delim::Block),
+                    Token::Close(Delim::Block),
+                    [
+                        (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                        (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
+                        (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                    ],
+                    |span| (Expr::Error, span),
+                )),
+                */
+        )
+        .map(|(name, members)| Struct {name, members})
+        .labelled("struct");
+
+    struct_
+}
+
 pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
     recursive(|type_| {
         let ident = filter_map(|span, tok| match tok {
