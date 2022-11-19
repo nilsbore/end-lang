@@ -50,12 +50,10 @@ pub enum Literal {
     Str(String), //Intern<String>),
 }
 
-/*
-#[derive(Debug, PartialEq)]
-pub struct GenericTy {
-    pub Spanned<String>
+#[derive(Debug)]
+pub struct Generics {
+    pub args: Vec<Item>
 }
-*/
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
@@ -94,6 +92,7 @@ pub struct Item {
 #[derive(Debug)]
 pub struct Struct {
     pub name: Spanned<String>,
+    pub generics: Option<Generics>,
     pub members: Vec<Item>,
 }
 
@@ -104,6 +103,7 @@ pub struct Func {
     //pub ty_hint: SrcNode<Type>,
     pub args: Vec<Item>,
     pub rtn: Spanned<Type>,
+    pub generics: Option<Generics>,
     //body: Spanned<Expr>,
     pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
 }
