@@ -1,8 +1,8 @@
 # import a library
-import file
+#import file
 
 # ends with End statement or end of file
-begin namespace Examples1
+#begin namespace Examples1
 
 def answer: i32 = 42
 
@@ -18,10 +18,10 @@ def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type,
 #TODO: def mmul(a: [M, N: T], b: [N, L: T]) -> [M, L: T] for T: type, L, M, N: size =
 #    pass
 
-end namespace Examples1
+#end namespace Examples1
 
 # makes functions above available for rest of file
-open namespace Examples1
+#open namespace Examples1
 
 def struct Person =
     name: String
@@ -35,12 +35,12 @@ def struct Vec3 for T: type =
 
 def enum Option for T: type =
     | None
-    | Some T
+    | Some(T)
 
 def isEmpty(v: Option of i32) -> bool =
     match v:
     | None => False
-    | Some _ => True    
+    | Some(_) => True    
 
 let v: Vec3[f32] = Vec3(x=1, y=2, z=3)
 # identical to

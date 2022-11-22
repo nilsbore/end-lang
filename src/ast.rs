@@ -97,6 +97,19 @@ pub struct Struct {
 }
 
 #[derive(Debug)]
+pub struct EnumVariant {
+    pub name: Spanned<String>,
+    pub values: Vec<Spanned<Type>>,
+}
+
+#[derive(Debug)]
+pub struct Enum {
+    pub name: Spanned<String>,
+    pub generics: Option<Generics>,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug)]
 pub struct Func {
     pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,

@@ -98,7 +98,7 @@ pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Cl
         .ignore_then(
             ident
                 .map_with_span(|name, span| (name, span))
-                .labelled("function name"),
+                .labelled("struct name"),
         )
         .then(generics_parser().or_not())
         .then_ignore(just(Token::Assign))
@@ -125,6 +125,50 @@ pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Cl
         .labelled("struct");
 
     struct_
+}
+
+pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let variant = 
+        ident.clone()
+            .map_with_span(|name, span| (name, span))
+        .then(
+            type_parser().separated_by(just(Token::Comma)).allow_trailing().delimited_by(
+                just(Token::Open(Delim::Paren)),
+                just(Token::Close(Delim::Paren)),
+            )
+            .or_not()
+        )
+        .map(|(name, values)| match values {
+            Some(values) => EnumVariant { name, values },
+            None => EnumVariant { name, values: Vec::new() },
+        }); 
+
+    let enum_ = just(Token::Def)
+        .ignore_then(just(Token::Enum))
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("enum name"),
+        )
+        .then(generics_parser().or_not())
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        //.then(item.repeated())
+        .then(
+            variant.separated_by(just(Token::Pipe)).allow_leading().delimited_by(
+                just(Token::Open(Delim::Block)),
+                just(Token::Close(Delim::Block)),
+            ),
+        )
+        .map(|((name, generics), variants)| Enum { name, generics, variants })
+        .labelled("enum");
+
+    enum_
 }
 
 pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
