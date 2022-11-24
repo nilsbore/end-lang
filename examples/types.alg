@@ -1,1 +1,1 @@
-dict[str, list[int]]
+(dict[str, list[int]])

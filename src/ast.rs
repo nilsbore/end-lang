@@ -97,6 +97,13 @@ pub struct Struct {
 }
 
 #[derive(Debug)]
+pub struct Trait {
+    pub name: Spanned<String>,
+    pub generics: Option<Generics>,
+    pub members: Vec<Item>,
+}
+
+#[derive(Debug)]
 pub struct EnumVariant {
     pub name: Spanned<String>,
     pub values: Vec<Spanned<Type>>,

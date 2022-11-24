@@ -127,6 +127,52 @@ pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Cl
     struct_
 }
 
+pub fn trait_parser() -> impl Parser<Token, Trait, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let item = ident
+        .clone()
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .map(|(name, ty)| Item { name, ty });
+
+    let trait_ = just(Token::Def)
+        .ignore_then(just(Token::Trait))
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("trait name"),
+        )
+        .then(generics_parser().or_not())
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        //.then(item.repeated())
+        .then(
+            item.repeated().delimited_by(
+                just(Token::Open(Delim::Block)),
+                just(Token::Close(Delim::Block)),
+            ), /*
+               .recover_with(nested_delimiters(
+                   Token::Open(Delim::Block),
+                   Token::Close(Delim::Block),
+                   [
+                       (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                       (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
+                       (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                   ],
+                   |span| (Expr::Error, span),
+               )),
+               */
+        )
+        .map(|((name, generics), members)| Trait { name, generics, members })
+        .labelled("trait");
+
+    trait_
+}
+
 pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
@@ -178,7 +224,7 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
             _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
         });
 
-        let generic_args = type_
+        let generic_args = type_.clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .delimited_by(
@@ -199,14 +245,48 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
         ))
         */
 
-        ident
+        let named = ident
             .then(generic_args.or_not())
             //.ok_or_else(|| Vec::new())
             .map_with_span(|(name, generic_args), span: Span| match generic_args {
                 Some(args) => (Type::Named(name, args), span.clone()),
                 None => (Type::Named(name, Vec::new()), span.clone()),
             })
-            .labelled("type")
+            .labelled("named type");
+
+        let tuple_or_func =  type_.clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .delimited_by(
+                just(Token::Open(Delim::Paren)),
+                just(Token::Close(Delim::Paren)),
+            )
+            .then(
+                just(Token::Op(Op::RArrow))
+                .ignore_then(type_.clone())
+                .or_not()
+            )
+            .map_with_span(|(args, maybe_rtn), span: Span| match maybe_rtn {
+                Some(rtn) => (Type::Func(args, Box::new(rtn)), span.clone()),
+                None => (Type::Tuple(args), span.clone()),
+            })
+            .labelled("function type");
+
+        /*
+        let tuple =  type_.clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .delimited_by(
+                just(Token::Open(Delim::Paren)),
+                just(Token::Close(Delim::Paren)),
+            )
+            .map_with_span(|members, span: Span| {
+                (Type::Tuple(members), span.clone())
+            })
+            .labelled("tuple type");
+        */
+
+        named.or(tuple_or_func) // or(tuple).or(func)
     })
 }
 
