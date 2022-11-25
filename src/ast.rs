@@ -99,8 +99,15 @@ pub struct Struct {
 #[derive(Debug)]
 pub struct Trait {
     pub name: Spanned<String>,
-    pub generics: Option<Generics>,
+    pub generics: Generics,
     pub members: Vec<Item>,
+}
+
+#[derive(Debug)]
+pub struct Impl {
+    pub name: Spanned<String>,
+    pub generic_args: Vec<Spanned<Type>>,
+    pub funcs: Vec<Func>,
 }
 
 #[derive(Debug)]

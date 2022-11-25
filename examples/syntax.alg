@@ -6,8 +6,9 @@
 
 def answer: i32 = 42
 
-def times(a: T, b: T) -> T for T: type =
-    a * b
+def times(a: T, b: T) -> T for T: type = a * b
+
+def times_lambda: (T, T) -> T for T: type = fn(a, b) => a*b
 
 def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type, L, M, N: size =
     let C : tensor[T, M, L] = tensor[T, M, L].zeros()
@@ -57,7 +58,7 @@ def trait Add for T: type = # this is all good
     add: (T, T) -> T
 
 def impl Add for i32 =
-    def add(a: i32, b: i32) =
+    def add(a: i32, b: i32) -> i32 =
         a + b
 
 # TODO: let f = fn x => x + 1
