@@ -124,6 +124,14 @@ pub struct Enum {
 }
 
 #[derive(Debug)]
+pub struct Const {
+    pub name: Spanned<String>, //SrcNode<Ident>,
+    pub ty: Spanned<Type>,
+    pub generics: Option<Generics>,
+    pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+}
+
+#[derive(Debug)]
 pub struct Func {
     pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,

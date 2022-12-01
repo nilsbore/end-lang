@@ -399,3 +399,33 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
 
     func
 }
+
+pub fn const_parser() -> impl Parser<Token, Const, Error = Simple<Token>> + Clone {
+
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let const_ = just(Token::Def)
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("function name"),
+        )
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .then(generics_parser().or_not())
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        .then(expr_parser())
+        .map(|(((name, ty), generics), value)| Const {
+            name,
+            ty,
+            generics,
+            value: Box::new(value),
+        })
+        .labelled("const");
+
+    const_
+}
