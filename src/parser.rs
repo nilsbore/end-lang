@@ -429,3 +429,34 @@ pub fn const_parser() -> impl Parser<Token, Const, Error = Simple<Token>> + Clon
 
     const_
 }
+
+pub fn let_parser() -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
+
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let const_ = just(Token::Let)
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("function name"),
+        )
+        .then(
+            just(Token::Colon)
+            .ignore_then(type_parser())
+            .or_not()
+        )
+        .then_ignore(just(Token::Assign))
+        //.then(just(Token::Assign)) //.padded()
+        .then(expr_parser()) // NOTE: does this need to be recursive?
+        .map(|((name, ty), value)| Let {
+            name,
+            ty,
+            value: Box::new(value),
+        })
+        .labelled("let");
+
+    const_
+}

@@ -132,6 +132,13 @@ pub struct Const {
 }
 
 #[derive(Debug)]
+pub struct Let {
+    pub name: Spanned<String>, //SrcNode<Ident>,
+    pub ty: Option<Spanned<Type>>,
+    pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+}
+
+#[derive(Debug)]
 pub struct Func {
     pub name: Spanned<String>, //SrcNode<Ident>,
     //pub generics: Generics,
