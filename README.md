@@ -4,7 +4,7 @@ The end programming language.
 ### Naming
 
 Tongue in cheek: in contrast to python, end encompasses and actual end statement for namespaces.
-Also, considering tools like co-pilot, it could signify the end of history of programming languages ;).
+Also, considering tools like co-pilot, it could signify the end of history for programming languages ;).
 
 ### Influences
 
