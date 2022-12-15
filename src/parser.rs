@@ -73,8 +73,8 @@ pub fn generics_parser() -> impl Parser<Token, Generics, Error = Simple<Token>> 
     let generics = just(Token::For)
         .ignore_then(
             item.clone()
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
+                .separated_by(just(Token::Comma))
+                .allow_trailing(),
         )
         .map(|args| Generics { args });
 
@@ -121,7 +121,11 @@ pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Cl
                )),
                */
         )
-        .map(|((name, generics), members)| Struct { name, generics, members })
+        .map(|((name, generics), members)| Struct {
+            name,
+            generics,
+            members,
+        })
         .labelled("struct");
 
     struct_
@@ -167,7 +171,11 @@ pub fn trait_parser() -> impl Parser<Token, Trait, Error = Simple<Token>> + Clon
                )),
                */
         )
-        .map(|((name, generics), members)| Trait { name, generics, members })
+        .map(|((name, generics), members)| Trait {
+            name,
+            generics,
+            members,
+        })
         .labelled("trait");
 
     trait_
@@ -188,18 +196,22 @@ pub fn impl_parser() -> impl Parser<Token, Impl, Error = Simple<Token>> + Clone 
         )
         .then_ignore(just(Token::For))
         .then(
-            type_parser().separated_by(just(Token::Comma)).allow_trailing()
+            type_parser()
+                .separated_by(just(Token::Comma))
+                .allow_trailing(),
         )
         .then_ignore(just(Token::Assign))
         //.then(just(Token::Assign)) //.padded()
         //.then(item.repeated())
-        .then(
-            funcs_parser().repeated().delimited_by(
-                just(Token::Open(Delim::Block)),
-                just(Token::Close(Delim::Block)),
-            ), 
-        )
-        .map(|((name, generic_args), funcs)| Impl { name, generic_args, funcs })
+        .then(funcs_parser().repeated().delimited_by(
+            just(Token::Open(Delim::Block)),
+            just(Token::Close(Delim::Block)),
+        ))
+        .map(|((name, generic_args), funcs)| Impl {
+            name,
+            generic_args,
+            funcs,
+        })
         .labelled("trait impl");
 
     impl_
@@ -211,20 +223,26 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
     });
 
-    let variant = 
-        ident.clone()
-            .map_with_span(|name, span| (name, span))
+    let variant = ident
+        .clone()
+        .map_with_span(|name, span| (name, span))
         .then(
-            type_parser().separated_by(just(Token::Comma)).allow_trailing().delimited_by(
-                just(Token::Open(Delim::Paren)),
-                just(Token::Close(Delim::Paren)),
-            )
-            .or_not()
+            type_parser()
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .delimited_by(
+                    just(Token::Open(Delim::Paren)),
+                    just(Token::Close(Delim::Paren)),
+                )
+                .or_not(),
         )
         .map(|(name, values)| match values {
             Some(values) => EnumVariant { name, values },
-            None => EnumVariant { name, values: Vec::new() },
-        }); 
+            None => EnumVariant {
+                name,
+                values: Vec::new(),
+            },
+        });
 
     let enum_ = just(Token::Def)
         .ignore_then(just(Token::Enum))
@@ -238,12 +256,19 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
         //.then(just(Token::Assign)) //.padded()
         //.then(item.repeated())
         .then(
-            variant.separated_by(just(Token::Pipe)).allow_leading().delimited_by(
-                just(Token::Open(Delim::Block)),
-                just(Token::Close(Delim::Block)),
-            ),
+            variant
+                .separated_by(just(Token::Pipe))
+                .allow_leading()
+                .delimited_by(
+                    just(Token::Open(Delim::Block)),
+                    just(Token::Close(Delim::Block)),
+                ),
         )
-        .map(|((name, generics), variants)| Enum { name, generics, variants })
+        .map(|((name, generics), variants)| Enum {
+            name,
+            generics,
+            variants,
+        })
         .labelled("enum");
 
     enum_
@@ -256,7 +281,8 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
             _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
         });
 
-        let generic_args = type_.clone()
+        let generic_args = type_
+            .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .delimited_by(
@@ -286,7 +312,8 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
             })
             .labelled("named type");
 
-        let tuple_or_func =  type_.clone()
+        let tuple_or_func = type_
+            .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .delimited_by(
@@ -295,8 +322,8 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
             )
             .then(
                 just(Token::Op(Op::RArrow))
-                .ignore_then(type_.clone())
-                .or_not()
+                    .ignore_then(type_.clone())
+                    .or_not(),
             )
             .map_with_span(|(args, maybe_rtn), span: Span| match maybe_rtn {
                 Some(rtn) => (Type::Func(args, Box::new(rtn)), span.clone()),
@@ -401,7 +428,6 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
 }
 
 pub fn const_parser() -> impl Parser<Token, Const, Error = Simple<Token>> + Clone {
-
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
@@ -430,8 +456,9 @@ pub fn const_parser() -> impl Parser<Token, Const, Error = Simple<Token>> + Clon
     const_
 }
 
-pub fn let_parser() -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
-
+pub fn let_parser_rec(
+    expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
@@ -443,14 +470,9 @@ pub fn let_parser() -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
                 .map_with_span(|name, span| (name, span))
                 .labelled("function name"),
         )
-        .then(
-            just(Token::Colon)
-            .ignore_then(type_parser())
-            .or_not()
-        )
+        .then(just(Token::Colon).ignore_then(type_parser()).or_not())
         .then_ignore(just(Token::Assign))
-        //.then(just(Token::Assign)) //.padded()
-        .then(expr_parser()) // NOTE: does this need to be recursive?
+        .then(expr)
         .map(|((name, ty), value)| Let {
             name,
             ty,
@@ -459,4 +481,67 @@ pub fn let_parser() -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
         .labelled("let");
 
     const_
+}
+
+// NOTE: this is used by functions
+pub fn block_expr_parser() -> impl Parser<Token, BlockExpr, Error = Simple<Token>> + Clone {
+    let expr = expr_parser();
+    block_expr_parser_rec(expr)
+}
+
+// NOTE: this is used by exprs (e.g. block, for, if etc.)
+pub fn block_expr_parser_rec(
+    expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, BlockExpr, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let assign = ident
+        .map_with_span(|name, span| (name, span))
+        .labelled("identifier name")
+        .then_ignore(just(Token::Assign))
+        .then(expr.clone())
+        .map(|(name, value)| Assign {
+            name,
+            value: Box::new(value),
+        })
+        .labelled("assign");
+
+    let let_ = let_parser_rec(expr.clone());
+    let stmt = expr
+        .clone()
+        .map(|expr| Statement::Expr(Box::new(expr)))
+        .or(let_.map(|let_| Statement::Let(Box::new(let_))))
+        .or(assign.map(|assign| Statement::Assign(Box::new(assign))));
+    let block = stmt
+        .repeated()
+        .delimited_by(
+            just(Token::Open(Delim::Block)),
+            just(Token::Close(Delim::Block)),
+        )
+        // Attempt to recover anything that looks like a function body but contains errors
+        // .recover_with(nested_delimiters(
+        //     Token::Open(Delim::Block),
+        //     Token::Close(Delim::Block),
+        //     [
+        //         (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+        //         (
+        //             Token::Open(Delim::SquareBrackets),
+        //             Token::Close(Delim::SquareBrackets),
+        //         ),
+        //         (
+        //             Token::Open(Delim::CurlyBrackets),
+        //             Token::Close(Delim::CurlyBrackets),
+        //         ),
+        //     ],
+        //     |span| (Expr::Error, span),
+        // ))
+        .map(|body| BlockExpr::Stmts(body))
+        .labelled("block");
+
+    expr.clone()
+        .map(|expr| BlockExpr::Expr(Box::new(expr)))
+        .or(block)
 }

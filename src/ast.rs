@@ -1,5 +1,5 @@
-use internment::Intern;
 use crate::utils::*;
+use internment::Intern;
 
 /*
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -26,16 +26,24 @@ pub enum UnaryOp {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     // Sum
-    Add, Sub,
+    Add,
+    Sub,
     // Product
-    Mul, Div, Rem,
+    Mul,
+    Div,
+    Rem,
     // Equality
-    Eq, NotEq,
+    Eq,
+    NotEq,
     // Comparison
-    Less, LessEq,
-    Greater, GreaterEq,
+    Less,
+    LessEq,
+    Greater,
+    GreaterEq,
     // Logical
-    And, Or, Xor,
+    And,
+    Or,
+    Xor,
     // Lists
     //Join,
 }
@@ -52,7 +60,7 @@ pub enum Literal {
 
 #[derive(Debug)]
 pub struct Generics {
-    pub args: Vec<Item>
+    pub args: Vec<Item>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,10 +140,29 @@ pub struct Const {
 }
 
 #[derive(Debug)]
+pub struct Assign {
+    pub name: Spanned<String>,     //SrcNode<Ident>,
+    pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+}
+
+#[derive(Debug)]
 pub struct Let {
     pub name: Spanned<String>, //SrcNode<Ident>,
     pub ty: Option<Spanned<Type>>,
     pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+}
+
+#[derive(Debug)]
+pub enum Statement {
+    Expr(Box<Spanned<Expr>>),
+    Let(Box<Let>),
+    Assign(Box<Assign>),
+}
+
+#[derive(Debug)]
+pub enum BlockExpr {
+    Expr(Box<Spanned<Expr>>),
+    Stmts(Vec<Statement>),
 }
 
 #[derive(Debug)]
