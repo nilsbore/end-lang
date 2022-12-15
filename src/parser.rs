@@ -391,36 +391,37 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
         .then_ignore(just(Token::Assign))
         //.then(just(Token::Assign)) //.padded()
         .then(
-            expr_parser()
-                //.repeated()
-                .delimited_by(
-                    just(Token::Open(Delim::Block)),
-                    just(Token::Close(Delim::Block)),
-                )
-                // Attempt to recover anything that looks like a function body but contains errors
-                .recover_with(nested_delimiters(
-                    Token::Open(Delim::Block),
-                    Token::Close(Delim::Block),
-                    [
-                        (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                        (
-                            Token::Open(Delim::SquareBrackets),
-                            Token::Close(Delim::SquareBrackets),
-                        ),
-                        (
-                            Token::Open(Delim::CurlyBrackets),
-                            Token::Close(Delim::CurlyBrackets),
-                        ),
-                    ],
-                    |span| (Expr::Error, span),
-                )),
+            // expr_parser()
+            //     //.repeated()
+            //     .delimited_by(
+            //         just(Token::Open(Delim::Block)),
+            //         just(Token::Close(Delim::Block)),
+            //     )
+            //     // Attempt to recover anything that looks like a function body but contains errors
+            //     .recover_with(nested_delimiters(
+            //         Token::Open(Delim::Block),
+            //         Token::Close(Delim::Block),
+            //         [
+            //             (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+            //             (
+            //                 Token::Open(Delim::SquareBrackets),
+            //                 Token::Close(Delim::SquareBrackets),
+            //             ),
+            //             (
+            //                 Token::Open(Delim::CurlyBrackets),
+            //                 Token::Close(Delim::CurlyBrackets),
+            //             ),
+            //         ],
+            //         |span| (Expr::Error, span),
+            //     )),
+            block_expr_parser(),
         )
         .map(|((((name, args), rtn), generics), body)| Func {
-            name: name,
-            args: args,
-            rtn: rtn,
-            generics: generics,
-            body: vec![body],
+            name,
+            args,
+            rtn,
+            generics,
+            body: Box::new(body), //vec![body],
         })
         .labelled("function");
 
@@ -522,22 +523,23 @@ pub fn block_expr_parser_rec(
             just(Token::Close(Delim::Block)),
         )
         // Attempt to recover anything that looks like a function body but contains errors
-        // .recover_with(nested_delimiters(
-        //     Token::Open(Delim::Block),
-        //     Token::Close(Delim::Block),
-        //     [
-        //         (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-        //         (
-        //             Token::Open(Delim::SquareBrackets),
-        //             Token::Close(Delim::SquareBrackets),
-        //         ),
-        //         (
-        //             Token::Open(Delim::CurlyBrackets),
-        //             Token::Close(Delim::CurlyBrackets),
-        //         ),
-        //     ],
-        //     |span| (Expr::Error, span),
-        // ))
+        .recover_with(nested_delimiters(
+            Token::Open(Delim::Block),
+            Token::Close(Delim::Block),
+            [
+                (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                (
+                    Token::Open(Delim::SquareBrackets),
+                    Token::Close(Delim::SquareBrackets),
+                ),
+                (
+                    Token::Open(Delim::CurlyBrackets),
+                    Token::Close(Delim::CurlyBrackets),
+                ),
+            ],
+            // TODO: add span to return
+            |span| vec![Statement::Error],
+        ))
         .map(|body| BlockExpr::Stmts(body))
         .labelled("block");
 

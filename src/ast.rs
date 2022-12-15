@@ -154,6 +154,7 @@ pub struct Let {
 
 #[derive(Debug)]
 pub enum Statement {
+    Error,
     Expr(Box<Spanned<Expr>>),
     Let(Box<Let>),
     Assign(Box<Assign>),
@@ -174,5 +175,6 @@ pub struct Func {
     pub rtn: Spanned<Type>,
     pub generics: Option<Generics>,
     //body: Spanned<Expr>,
-    pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
+    //pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
+    pub body: Box<BlockExpr>,
 }
