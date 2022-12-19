@@ -141,29 +141,82 @@ pub struct Const {
 
 #[derive(Debug)]
 pub struct Assign {
-    pub name: Spanned<String>,     //SrcNode<Ident>,
-    pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+    pub name: Spanned<String>,  //SrcNode<Ident>,
+    pub value: Box<AssignExpr>, //SrcNode<Expr>,
 }
 
 #[derive(Debug)]
 pub struct Let {
     pub name: Spanned<String>, //SrcNode<Ident>,
     pub ty: Option<Spanned<Type>>,
-    pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+    pub value: Box<AssignExpr>, //SrcNode<Expr>,
+}
+
+#[derive(Debug)]
+pub struct ForExpr {
+    pub ident: Spanned<String>,
+    pub expr: Box<Spanned<Expr>>,
+    pub body: Box<ControlExpr>,
+}
+
+#[derive(Debug)]
+pub struct WhileExpr {
+    pub expr: Box<Spanned<Expr>>,
+    pub body: Box<ControlExpr>,
+}
+
+#[derive(Debug)]
+pub struct MatchBranch {}
+
+#[derive(Debug)]
+pub struct MatchExpr {
+    pub expr: Box<Spanned<Expr>>,
+    pub branches: Vec<MatchBranch>,
+}
+
+#[derive(Debug)]
+pub struct IfExpr {
+    pub main_expr: Box<Spanned<Expr>>,
+    pub main_body: Box<ControlExpr>,
+    pub elif_expr: Vec<Spanned<Expr>>,
+    pub eiif_body: Vec<ControlExpr>,
+    pub else_body: Box<ControlExpr>,
 }
 
 #[derive(Debug)]
 pub enum Statement {
     Error,
-    Expr(Box<Spanned<Expr>>),
+    Expr(Box<AssignExpr>),
     Let(Box<Let>),
     Assign(Box<Assign>),
 }
 
 #[derive(Debug)]
+pub struct Block {
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug)]
 pub enum BlockExpr {
+    For(Box<ForExpr>),
+    While(Box<WhileExpr>),
+    Match(Box<MatchExpr>),
+    If(Box<IfExpr>),
+    Block(Block),
+}
+
+#[derive(Debug)]
+pub enum ControlExpr {
     Expr(Box<Spanned<Expr>>),
-    Stmts(Vec<Statement>),
+    Block(Block),
+    //Stmts(Vec<Statement>),
+}
+
+#[derive(Debug)]
+pub enum AssignExpr {
+    Expr(Box<Spanned<Expr>>),
+    BlockExpr(Box<BlockExpr>),
+    //Stmts(Vec<Statement>),
 }
 
 #[derive(Debug)]
@@ -176,5 +229,5 @@ pub struct Func {
     pub generics: Option<Generics>,
     //body: Spanned<Expr>,
     //pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
-    pub body: Box<BlockExpr>,
+    pub body: Box<AssignExpr>,
 }

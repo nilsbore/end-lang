@@ -414,7 +414,7 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
             //         ],
             //         |span| (Expr::Error, span),
             //     )),
-            block_expr_parser(),
+            assign_expr_parser(),
         )
         .map(|((((name, args), rtn), generics), body)| Func {
             name,
@@ -458,7 +458,7 @@ pub fn const_parser() -> impl Parser<Token, Const, Error = Simple<Token>> + Clon
 }
 
 pub fn let_parser_rec(
-    expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
+    block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, Let, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
@@ -473,7 +473,7 @@ pub fn let_parser_rec(
         )
         .then(just(Token::Colon).ignore_then(type_parser()).or_not())
         .then_ignore(just(Token::Assign))
-        .then(expr)
+        .then(assign_expr_parser_rec(block.clone()))
         .map(|((name, ty), value)| Let {
             name,
             ty,
@@ -485,65 +485,89 @@ pub fn let_parser_rec(
 }
 
 // NOTE: this is used by functions
-pub fn block_expr_parser() -> impl Parser<Token, BlockExpr, Error = Simple<Token>> + Clone {
+pub fn control_expr_parser_rec(
+    block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, ControlExpr, Error = Simple<Token>> + Clone {
+    //let block = statements_parser_rec(expr.clone());
     let expr = expr_parser();
-    block_expr_parser_rec(expr)
+    block
+        .map(|block| ControlExpr::Block(block))
+        .or(expr.map(|expr| ControlExpr::Expr(Box::new(expr))))
+}
+
+pub fn assign_expr_parser() -> impl Parser<Token, AssignExpr, Error = Simple<Token>> + Clone {
+    let block = block_parser();
+    assign_expr_parser_rec(block)
+}
+
+pub fn assign_expr_parser_rec(
+    block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, AssignExpr, Error = Simple<Token>> + Clone {
+    //let block = statements_parser_rec(expr.clone());
+    let expr = expr_parser();
+    expr.clone()
+        .map(|expr| AssignExpr::Expr(Box::new(expr)))
+        .or(block.map(|block| AssignExpr::BlockExpr(Box::new(BlockExpr::Block(block)))))
 }
 
 // NOTE: this is used by exprs (e.g. block, for, if etc.)
-pub fn block_expr_parser_rec(
-    expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
-) -> impl Parser<Token, BlockExpr, Error = Simple<Token>> + Clone {
-    let ident = filter_map(|span, tok| match tok {
-        Token::Ident(ident) => Ok(ident.clone()),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    });
+pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clone {
+    let expr = expr_parser();
+    recursive(|block| {
+        let ident = filter_map(|span, tok| match tok {
+            Token::Ident(ident) => Ok(ident.clone()),
+            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+        });
 
-    let assign = ident
-        .map_with_span(|name, span| (name, span))
-        .labelled("identifier name")
-        .then_ignore(just(Token::Assign))
-        .then(expr.clone())
-        .map(|(name, value)| Assign {
-            name,
-            value: Box::new(value),
-        })
-        .labelled("assign");
+        let assign_expr = assign_expr_parser_rec(block.clone());
 
-    let let_ = let_parser_rec(expr.clone());
-    let stmt = expr
-        .clone()
-        .map(|expr| Statement::Expr(Box::new(expr)))
-        .or(let_.map(|let_| Statement::Let(Box::new(let_))))
-        .or(assign.map(|assign| Statement::Assign(Box::new(assign))));
-    let block = stmt
-        .repeated()
-        .delimited_by(
-            just(Token::Open(Delim::Block)),
-            just(Token::Close(Delim::Block)),
-        )
-        // Attempt to recover anything that looks like a function body but contains errors
-        .recover_with(nested_delimiters(
-            Token::Open(Delim::Block),
-            Token::Close(Delim::Block),
-            [
-                (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                (
-                    Token::Open(Delim::SquareBrackets),
-                    Token::Close(Delim::SquareBrackets),
-                ),
-                (
-                    Token::Open(Delim::CurlyBrackets),
-                    Token::Close(Delim::CurlyBrackets),
-                ),
-            ],
-            // TODO: add span to return
-            |span| vec![Statement::Error],
-        ))
-        .map(|body| BlockExpr::Stmts(body))
-        .labelled("block");
+        let assign = ident
+            .map_with_span(|name, span| (name, span))
+            .labelled("identifier name")
+            .then_ignore(just(Token::Assign))
+            .then(assign_expr.clone())
+            .map(|(name, value)| Assign {
+                name,
+                value: Box::new(value),
+            })
+            .labelled("assign");
 
-    expr.clone()
-        .map(|expr| BlockExpr::Expr(Box::new(expr)))
-        .or(block)
+        let let_ = let_parser_rec(block.clone());
+        let stmt = assign_expr
+            .clone()
+            .map(|expr| Statement::Expr(Box::new(expr)))
+            .or(let_.map(|let_| Statement::Let(Box::new(let_))))
+            .or(assign.map(|assign| Statement::Assign(Box::new(assign))));
+        let block = stmt
+            .repeated()
+            .delimited_by(
+                just(Token::Open(Delim::Block)),
+                just(Token::Close(Delim::Block)),
+            )
+            // Attempt to recover anything that looks like a function body but contains errors
+            .recover_with(nested_delimiters(
+                Token::Open(Delim::Block),
+                Token::Close(Delim::Block),
+                [
+                    (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                    (
+                        Token::Open(Delim::SquareBrackets),
+                        Token::Close(Delim::SquareBrackets),
+                    ),
+                    (
+                        Token::Open(Delim::CurlyBrackets),
+                        Token::Close(Delim::CurlyBrackets),
+                    ),
+                ],
+                // TODO: add span to return
+                |span| vec![Statement::Error],
+            ))
+            .map(|body| Block { body })
+            .labelled("block");
+
+        block
+        // expr.clone()
+        //     .map(|expr| BlockExpr::Expr(Box::new(expr)))
+        //     .or(block)
+    })
 }
