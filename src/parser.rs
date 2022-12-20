@@ -504,10 +504,79 @@ pub fn assign_expr_parser_rec(
     block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, AssignExpr, Error = Simple<Token>> + Clone {
     //let block = statements_parser_rec(expr.clone());
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
     let expr = expr_parser();
-    expr.clone()
-        .map(|expr| AssignExpr::Expr(Box::new(expr)))
-        .or(block.map(|block| AssignExpr::BlockExpr(Box::new(BlockExpr::Block(block)))))
+    let expr_block = expr.clone().map(|expr| AssignExpr::Expr(Box::new(expr)));
+    let control_expr = block
+        .clone()
+        .map(|block| ControlExpr::Block(block))
+        .or(expr.clone().map(|expr| ControlExpr::Expr(Box::new(expr))));
+
+    let if_ = just(Token::If)
+        .ignore_then(expr.clone())
+        .then_ignore(just(Token::Colon))
+        .then(control_expr.clone())
+        .then(
+            just(Token::Elif)
+                .ignore_then(expr.clone())
+                .then_ignore(just(Token::Colon))
+                .then(control_expr.clone())
+                .repeated(),
+        )
+        .then(
+            just(Token::Else)
+                .then(just(Token::Colon))
+                .ignore_then(control_expr.clone())
+                .or_not(),
+        )
+        .map(|(((main_expr, main_body), elifs), else_body)| {
+            BlockExpr::If(IfExpr {
+                main_expr: Box::new(main_expr),
+                main_body: Box::new(main_body),
+                elif_expr_body: elifs,
+                else_body: Box::new(else_body),
+            })
+        });
+
+    let while_ = just(Token::While)
+        .ignore_then(expr.clone())
+        .then_ignore(just(Token::Colon))
+        .then(control_expr.clone())
+        .map(|(expr, body)| {
+            BlockExpr::While(WhileExpr {
+                expr: Box::new(expr),
+                body: Box::new(body),
+            })
+        });
+
+    let for_ = just(Token::For)
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("for loop var"),
+        )
+        .then_ignore(just(Token::In))
+        .then(expr.clone())
+        .then_ignore(just(Token::Colon))
+        .then(control_expr.clone())
+        .map(|((ident, expr), body)| {
+            BlockExpr::For(ForExpr {
+                ident: ident,
+                expr: Box::new(expr),
+                body: Box::new(body),
+            })
+        });
+
+    let block_ = block.clone().map(|block| BlockExpr::Block(block));
+
+    expr_block.or(while_
+        .or(block_)
+        .or(if_)
+        .or(for_)
+        .map(|block_expr| AssignExpr::BlockExpr(Box::new(block_expr))))
 }
 
 // NOTE: this is used by exprs (e.g. block, for, if etc.)

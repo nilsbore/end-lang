@@ -178,9 +178,8 @@ pub struct MatchExpr {
 pub struct IfExpr {
     pub main_expr: Box<Spanned<Expr>>,
     pub main_body: Box<ControlExpr>,
-    pub elif_expr: Vec<Spanned<Expr>>,
-    pub eiif_body: Vec<ControlExpr>,
-    pub else_body: Box<ControlExpr>,
+    pub elif_expr_body: Vec<(Spanned<Expr>, ControlExpr)>,
+    pub else_body: Box<Option<ControlExpr>>,
 }
 
 #[derive(Debug)]
@@ -198,10 +197,10 @@ pub struct Block {
 
 #[derive(Debug)]
 pub enum BlockExpr {
-    For(Box<ForExpr>),
-    While(Box<WhileExpr>),
-    Match(Box<MatchExpr>),
-    If(Box<IfExpr>),
+    For(ForExpr),
+    While(WhileExpr),
+    Match(MatchExpr),
+    If(IfExpr),
     Block(Block),
 }
 

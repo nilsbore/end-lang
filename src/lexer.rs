@@ -1,5 +1,5 @@
-use chumsky::{prelude::*, BoxStream, Flat};
 use crate::utils::*;
+use chumsky::{prelude::*, BoxStream, Flat};
 use std::fmt;
 
 // Represents the different kinds of delimiters we care about
@@ -25,16 +25,25 @@ impl fmt::Display for Delim {
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Op {
     // Sum
-    Add, Sub,
+    Add,
+    Sub,
     // Product
-    Mul, Div, Rem,
+    Mul,
+    Div,
+    Rem,
     // Equality
-    Eq, NotEq,
+    Eq,
+    NotEq,
     // Comparison
-    Less, LessEq,
-    More, MoreEq,
+    Less,
+    LessEq,
+    More,
+    MoreEq,
     // Logical
-    Not, And, Or, Xor,
+    Not,
+    And,
+    Or,
+    Xor,
     // Lists
     Dot,
     RArrow,
@@ -86,8 +95,10 @@ pub enum Token {
     Let,
     Of,
     For,
+    In,
     If,
     Else,
+    Elif,
     While,
     Impl,
     Begin,
@@ -119,7 +130,9 @@ impl fmt::Display for Token {
             Token::Let => write!(f, "let"),
             Token::Of => write!(f, "of"),
             Token::For => write!(f, "for"),
+            Token::In => write!(f, "in"),
             Token::If => write!(f, "if"),
+            Token::Elif => write!(f, "elif"),
             Token::Else => write!(f, "else"),
             Token::While => write!(f, "while"),
             Token::Impl => write!(f, "impl"),
@@ -159,8 +172,10 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
             "let" => Token::Let,
             "def" => Token::Def,
             "if" => Token::If,
+            "elif" => Token::Elif,
             "else" => Token::Else,
             "for" => Token::For,
+            "in" => Token::In,
             "of" => Token::Of,
             "while" => Token::While,
             "block" => Token::Block,
@@ -211,24 +226,27 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
             just('/').to(Op::Div),
             just('%').to(Op::Rem),
         ))
-            .map(Token::Op);
+        .map(Token::Op);
 
         let single_token = int.or(str_).or(ctrl).or(op).or(ident).map(TokenTree::Token);
 
         // Tokens surrounded by parentheses get turned into parenthesised token trees
-        let parens_token_tree = tt.clone()
+        let parens_token_tree = tt
+            .clone()
             .padded()
             .repeated()
             .delimited_by(just('('), just(')'))
             .map(|tts| TokenTree::Tree(Delim::Paren, tts));
 
-        let brackets_token_tree = tt.clone()
+        let brackets_token_tree = tt
+            .clone()
             .padded()
             .repeated()
             .delimited_by(just('['), just(']'))
             .map(|tts| TokenTree::Tree(Delim::SquareBrackets, tts));
 
-        let curly_token_tree = tt.clone()
+        let curly_token_tree = tt
+            .clone()
             .padded()
             .repeated()
             .delimited_by(just('{'), just('}'))
