@@ -83,11 +83,12 @@ pub enum Expr {
     Literal(Literal),
     List(Vec<Spanned<Self>>),
     Local(String),
-    Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>),
+    //Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>),
     //Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
     Call(Box<Spanned<Self>>, Vec<Spanned<Self>>),
-    If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
+    Member(Box<Spanned<Self>>, Spanned<String>),
+    //If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
     //Print(Box<Spanned<Self>>),
 }
 

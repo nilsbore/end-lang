@@ -5,6 +5,11 @@ use chumsky::prelude::*; //{prelude::*, BoxStream, Flat};
 
 pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
     recursive(|expr| {
+        let ident = filter_map(|span, tok| match tok {
+            Token::Ident(ident) => Ok(ident.clone()),
+            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+        });
+
         let val = select! {
             //Token::Null => Expr::Value(Value::Null),
             Token::Bool(x) => Expr::Literal(Literal::Bool(x)),
@@ -16,13 +21,49 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         //let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
         let atom = val.map_with_span(|expr, span: Span| (expr, span));
 
+        let items = expr
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing();
+
+        //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
+        let access = atom
+            .then_ignore(just(Token::Op(Op::Dot)))
+            .then(
+                ident
+                    .map_with_span(|name, span| (name, span))
+                    .labelled("member name"),
+            )
+            .map_with_span(|(expr, member), span| (Expr::Member(Box::new(expr), member), span));
+
+        let call = atom
+            .or(access.clone())
+            .then(
+                items.delimited_by(
+                    just(Token::Open(Delim::Paren)),
+                    just(Token::Close(Delim::Paren)),
+                ), //.map_with_span(|args, span: Span| (args, span)),
+                   //.or_not(),
+            )
+            //.map(|(expr, args): (_, Option<Vec<(_, Span)>>)| match args {
+            .map(|(expr, args): (_, Vec<(_, Span)>)| {
+                let call_span: Span = expr.1.start..args.last().unwrap().1.end;
+                (Expr::Call(Box::new(expr), args), call_span)
+            }); // Expr::Call(Box::new(expr), args));
+                // .foldl(|f, args| {
+                //     let span = f.1.start..args.1.end;
+                //     (Expr::Call(Box::new(f), args.0), span)
+                // });
+
+        let val = atom.or(call).or(access);
+
         // Product ops (multiply and divide) have equal precedence
         let op = just(Token::Op(Op::Mul))
             .to(BinaryOp::Mul)
             .or(just(Token::Op(Op::Div)).to(BinaryOp::Div));
-        let product = atom
+        let product = val
             .clone()
-            .then(op.then(atom).repeated())
+            .then(op.then(val).repeated())
             .foldl(|a, (op, b)| {
                 let span = a.1.start..b.1.end;
                 (Expr::Binary(Box::new(a), op, Box::new(b)), span)
