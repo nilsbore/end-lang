@@ -38,8 +38,7 @@ def enum Option for T: type =
     | None
     | Some(T)
 
-def isEmpty(v: Option of i32) -> bool =
-    match v:
+def isEmpty(v: Option of i32) -> bool = match v:
     | None => False
     | Some(_) => True    
 
