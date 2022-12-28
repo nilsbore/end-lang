@@ -81,6 +81,7 @@ pub enum Token {
     Assign,
     Comma,
     Colon,
+    DoubleColon,
     Pipe,
     Int(u64),
     Ident(String),
@@ -116,6 +117,7 @@ impl fmt::Display for Token {
             Token::Assign => write!(f, "="),
             Token::Comma => write!(f, ","),
             Token::Colon => write!(f, ":"),
+            Token::DoubleColon => write!(f, "::"),
             Token::Pipe => write!(f, "|"),
             Token::Int(n) => write!(f, "{}", n),
             Token::Ident(s) => write!(f, "{}", s),
@@ -194,6 +196,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
 
         let ctrl = choice((
             just(',').to(Token::Comma),
+            just("::").to(Token::DoubleColon),
             just(':').to(Token::Colon),
             just('|').to(Token::Pipe),
             just('=').to(Token::Assign),

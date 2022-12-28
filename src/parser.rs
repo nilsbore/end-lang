@@ -3,6 +3,79 @@ use crate::lexer::*;
 use crate::utils::*;
 use chumsky::prelude::*; //{prelude::*, BoxStream, Flat};
 
+// pub fn lexpr_parser_rec<TExpr>(
+//     expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
+// ) -> impl Parser<Token, Spanned<LExpr<TExpr>>, Error = Simple<Token>> + Clone {
+//     let ident = filter_map(|span, tok| match tok {
+//         Token::Ident(ident) => Ok(ident.clone()),
+//         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+//     });
+//     let type_ = type_parser();
+
+//     let qualified_ident = ident
+//         .map_with_span(|name, span| (name, span))
+//         .labelled("ident path")
+//         .separated_by(just(Token::DoubleColon))
+//         .then_ignore(just(Token::DoubleColon))
+//         .or_not()
+//         .then(type_.then_ignore(just(Token::DoubleColon)).or_not())
+//         .then(
+//             ident
+//                 .map_with_span(|name, span| (name, span))
+//                 .labelled("ident name"),
+//         )
+//         .map(|((path, ty), ident)| match path {
+//             None => QualifiedIdent {
+//                 path: Vec::new(),
+//                 ty,
+//                 ident,
+//             },
+//             Some(path) => QualifiedIdent { path, ty, ident },
+//         });
+
+//     let items = expr
+//         .clone()
+//         .separated_by(just(Token::Comma))
+//         .allow_trailing();
+
+//     //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
+//     let access = qualified_ident
+//         .clone()
+//         .then_ignore(just(Token::Op(Op::Dot)))
+//         .then(
+//             ident
+//                 .map_with_span(|name, span| (name, span))
+//                 .labelled("member name"),
+//         )
+//         .map_with_span(|(expr, member), span| (LExpr::Member(Box::new(expr), member), span));
+
+//     let call = qualified_ident
+//         .clone()
+//         .or(access.clone())
+//         .then(
+//             items.delimited_by(
+//                 just(Token::Open(Delim::Paren)),
+//                 just(Token::Close(Delim::Paren)),
+//             ), //.map_with_span(|args, span: Span| (args, span)),
+//                //.or_not(),
+//         )
+//         //.map(|(expr, args): (_, Option<Vec<(_, Span)>>)| match args {
+//         .map(|(expr, args): (_, Vec<(_, Span)>)| {
+//             let call_span: Span = expr.1.start..args.last().unwrap().1.end;
+//             (Expr::Call(Box::new(expr), args), call_span)
+//         }); // Expr::Call(Box::new(expr), args));
+//             // .foldl(|f, args| {
+//             //     let span = f.1.start..args.1.end;
+//             //     (Expr::Call(Box::new(f), args.0), span)
+//             // });
+
+//     qualified_ident.or(access).or(call)
+// }
+
+// pub fn llexpr_parser() -> impl Parser<Token, LLExpr, Error = Simple<Token>> + Clone {
+//     recursive(|expr| lexpr_parser_rec(expr)).map(|expr| LLExpr { expr })
+// }
+
 pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
     recursive(|expr| {
         let ident = filter_map(|span, tok| match tok {
@@ -10,7 +83,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
         });
 
-        let val = select! {
+        let literal = select! {
             //Token::Null => Expr::Value(Value::Null),
             Token::Bool(x) => Expr::Literal(Literal::Bool(x)),
             Token::Int(n) => Expr::Literal(Literal::Nat(n)),
@@ -18,16 +91,78 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         }
         .labelled("value");
 
-        //let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
-        let atom = val.map_with_span(|expr, span: Span| (expr, span));
+        let type_ = type_parser();
+
+        let qualified_ident = ident
+            .map_with_span(|name, span| (name, span))
+            .labelled("ident path")
+            .separated_by(just(Token::DoubleColon))
+            .then_ignore(just(Token::DoubleColon))
+            .or_not()
+            .then(type_.then_ignore(just(Token::DoubleColon)).or_not())
+            .then(
+                ident
+                    .map_with_span(|name, span| (name, span))
+                    .labelled("ident name"),
+            )
+            .map(|((path, ty), ident)| match path {
+                None => QualifiedIdent {
+                    path: Vec::new(),
+                    ty,
+                    ident,
+                },
+                Some(path) => QualifiedIdent { path, ty, ident },
+            })
+            .map(Expr::Ident) //|ident| Expr::Ident(ident))
+            // TODO: improve this??
+            .map_with_span(|name, span| (name, span))
+            .labelled("ident name");
 
         let items = expr
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing();
 
+        //let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
+        //let atom = literal.map_with_span(|expr, span: Span| (expr, span));
+        let list = items
+            .clone()
+            .delimited_by(just(Token::Open(Delim::SquareBrackets)), just(Token::Close(Delim::SquareBrackets)))
+            .map(|items: Vec<(_, Span)>| {
+                let span: Span = items.first().unwrap().1.start..items.last().unwrap().1.end;
+                (Expr::List(items), span)
+            });
+
+        let atom = literal.map_with_span(|expr, span: Span| (expr, span))
+            .or(qualified_ident)
+            .or(list)
+            // .or(
+            //     expr.clone()
+            //         .delimited_by(just(Token::Open(Delim::Paren)), just(Token::Close(Delim::Paren)))
+            // )
+            // Attempt to recover anything that looks like a parenthesised expression but contains errors
+            .recover_with(nested_delimiters(
+                Token::Open(Delim::Paren),
+                Token::Close(Delim::Paren),
+                [
+                    (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
+                    (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                ],
+                |span| (Expr::Error, span),
+            ))
+            // Attempt to recover anything that looks like a list but contains errors
+            .recover_with(nested_delimiters(
+                Token::Open(Delim::SquareBrackets),
+                Token::Close(Delim::SquareBrackets),
+                [
+                    (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                    (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                ],
+                |span| (Expr::Error, span),
+            ));
+
         //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
-        let access = atom
+        let access = atom.clone()
             .then_ignore(just(Token::Op(Op::Dot)))
             .then(
                 ident
@@ -36,7 +171,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             )
             .map_with_span(|(expr, member), span| (Expr::Member(Box::new(expr), member), span));
 
-        let call = atom
+        let call = atom.clone()
             .or(access.clone())
             .then(
                 items.delimited_by(
@@ -47,6 +182,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             )
             //.map(|(expr, args): (_, Option<Vec<(_, Span)>>)| match args {
             .map(|(expr, args): (_, Vec<(_, Span)>)| {
+                // TODO: note that args may be empty
                 let call_span: Span = expr.1.start..args.last().unwrap().1.end;
                 (Expr::Call(Box::new(expr), args), call_span)
             }); // Expr::Call(Box::new(expr), args));

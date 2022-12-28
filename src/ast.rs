@@ -76,13 +76,33 @@ pub enum Type {
     Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
 }
 
+#[derive(Debug)]
+pub struct QualifiedIdent {
+    pub path: Vec<Spanned<String>>,
+    pub ty: Option<Spanned<Type>>,
+    pub ident: Spanned<String>,
+}
+
+#[derive(Debug)]
+pub enum LExpr<TExpr> {
+    Error,
+    Ident(QualifiedIdent),
+    Call(Box<Spanned<TExpr>>, Vec<Spanned<Expr>>),
+    Member(Box<Spanned<TExpr>>, Spanned<String>),
+}
+
+pub struct LLExpr {
+    expr: Spanned<LExpr<LLExpr>>,
+}
+
 // An expression node in the AST. Children are spanned so we can generate useful runtime errors.
 #[derive(Debug)]
 pub enum Expr {
     Error,
     Literal(Literal),
     List(Vec<Spanned<Self>>),
-    Local(String),
+    //Local(String),
+    Ident(QualifiedIdent),
     //Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>),
     //Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
