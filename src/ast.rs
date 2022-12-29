@@ -187,7 +187,16 @@ pub struct WhileExpr {
 }
 
 #[derive(Debug)]
-pub struct MatchBranch {}
+pub struct Pattern {
+    pub ident: Spanned<String>,
+    pub members: Vec<Self>,
+}
+
+#[derive(Debug)]
+pub struct MatchBranch {
+    pub pattern: Pattern,
+    pub body: Box<ControlExpr>,
+}
 
 #[derive(Debug)]
 pub struct MatchExpr {

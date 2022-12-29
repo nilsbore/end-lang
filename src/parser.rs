@@ -466,6 +466,59 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
     enum_
 }
 
+// pub fn match_parser() -> impl Parser<Token, MatchExpr, Error = Simple<Token>> + Clone {
+//     let ident = filter_map(|span, tok| match tok {
+//         Token::Ident(ident) => Ok(ident.clone()),
+//         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+//     });
+
+//     let variant = ident
+//         .clone()
+//         .map_with_span(|name, span| (name, span))
+//         .then(
+//             type_parser()
+//                 .separated_by(just(Token::Comma))
+//                 .allow_trailing()
+//                 .delimited_by(
+//                     just(Token::Open(Delim::Paren)),
+//                     just(Token::Close(Delim::Paren)),
+//                 )
+//                 .or_not(),
+//         )
+//         .map(|(name, values)| match values {
+//             Some(values) => EnumVariant { name, values },
+//             None => EnumVariant {
+//                 name,
+//                 values: Vec::new(),
+//             },
+//         });
+
+//     let expr = expr_parser();
+
+//     let enum_ = just(Token::Match)
+//         .then(expr)
+//         .then_ignore(just(Token::Colon))
+//         //.then(just(Token::Assign)) //.padded()
+//         //.then(item.repeated())
+//         .then(
+//             variant
+//                 .separated_by(just(Token::Pipe))
+//                 .allow_leading()
+//                 .delimited_by(
+//                     just(Token::Open(Delim::Block)),
+//                     just(Token::Close(Delim::Block)),
+//                 ),
+//         )
+//         .map(|((name, generics), variants)| MatchExpr {
+//             name,
+//             generics,
+//             variants,
+//         })
+//         .labelled("match expr");
+
+//     enum_
+// }
+
 pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
     recursive(|type_| {
         let ident = filter_map(|span, tok| match tok {
