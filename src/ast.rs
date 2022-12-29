@@ -251,3 +251,18 @@ pub struct Func {
     //pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
     pub body: Box<AssignExpr>,
 }
+
+#[derive(Debug)]
+pub enum Def {
+    Func(Func),
+    Enum(Enum),
+    Struct(Struct),
+    Impl(Impl),
+    Trait(Trait),
+    Const(Const),
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub defs: Vec<Def>,
+}

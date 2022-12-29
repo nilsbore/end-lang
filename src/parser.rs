@@ -127,13 +127,17 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         //let atom = literal.map_with_span(|expr, span: Span| (expr, span));
         let list = items
             .clone()
-            .delimited_by(just(Token::Open(Delim::SquareBrackets)), just(Token::Close(Delim::SquareBrackets)))
+            .delimited_by(
+                just(Token::Open(Delim::SquareBrackets)),
+                just(Token::Close(Delim::SquareBrackets)),
+            )
             .map(|items: Vec<(_, Span)>| {
                 let span: Span = items.first().unwrap().1.start..items.last().unwrap().1.end;
                 (Expr::List(items), span)
             });
 
-        let atom = literal.map_with_span(|expr, span: Span| (expr, span))
+        let atom = literal
+            .map_with_span(|expr, span: Span| (expr, span))
             .or(qualified_ident)
             .or(list)
             // .or(
@@ -145,8 +149,14 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
                 Token::Open(Delim::Paren),
                 Token::Close(Delim::Paren),
                 [
-                    (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
-                    (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                    (
+                        Token::Open(Delim::SquareBrackets),
+                        Token::Close(Delim::SquareBrackets),
+                    ),
+                    (
+                        Token::Open(Delim::CurlyBrackets),
+                        Token::Close(Delim::CurlyBrackets),
+                    ),
                 ],
                 |span| (Expr::Error, span),
             ))
@@ -156,13 +166,17 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
                 Token::Close(Delim::SquareBrackets),
                 [
                     (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                    (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                    (
+                        Token::Open(Delim::CurlyBrackets),
+                        Token::Close(Delim::CurlyBrackets),
+                    ),
                 ],
                 |span| (Expr::Error, span),
             ));
 
         //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
-        let access = atom.clone()
+        let access = atom
+            .clone()
             .then_ignore(just(Token::Op(Op::Dot)))
             .then(
                 ident
@@ -171,7 +185,8 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             )
             .map_with_span(|(expr, member), span| (Expr::Member(Box::new(expr), member), span));
 
-        let call = atom.clone()
+        let call = atom
+            .clone()
             .or(access.clone())
             .then(
                 items.delimited_by(
@@ -661,17 +676,6 @@ pub fn let_parser_rec(
     const_
 }
 
-// NOTE: this is used by functions
-pub fn control_expr_parser_rec(
-    block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
-) -> impl Parser<Token, ControlExpr, Error = Simple<Token>> + Clone {
-    //let block = statements_parser_rec(expr.clone());
-    let expr = expr_parser();
-    block
-        .map(|block| ControlExpr::Block(block))
-        .or(expr.map(|expr| ControlExpr::Expr(Box::new(expr))))
-}
-
 pub fn assign_expr_parser() -> impl Parser<Token, AssignExpr, Error = Simple<Token>> + Clone {
     let block = block_parser();
     assign_expr_parser_rec(block)
@@ -758,7 +762,6 @@ pub fn assign_expr_parser_rec(
 
 // NOTE: this is used by exprs (e.g. block, for, if etc.)
 pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clone {
-    let expr = expr_parser();
     recursive(|block| {
         let ident = filter_map(|span, tok| match tok {
             Token::Ident(ident) => Ok(ident.clone()),
@@ -816,4 +819,16 @@ pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clon
         //     .map(|expr| BlockExpr::Expr(Box::new(expr)))
         //     .or(block)
     })
+}
+
+pub fn program_parser() -> impl Parser<Token, Program, Error = Simple<Token>> + Clone {
+    funcs_parser()
+        .map(Def::Func)
+        .or(enum_parser().map(Def::Enum))
+        .or(struct_parser().map(Def::Struct))
+        .or(impl_parser().map(Def::Impl))
+        .or(trait_parser().map(Def::Trait))
+        .or(const_parser().map(Def::Const))
+        .repeated()
+        .map(|defs| Program { defs })
 }

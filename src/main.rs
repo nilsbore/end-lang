@@ -3,16 +3,16 @@ use chumsky::prelude::*;
 use chumsky::stream::Stream;
 use std::{env, fs};
 
-mod utils;
-mod lexer;
 mod ast;
+mod lexer;
 mod parser;
+mod utils;
 use crate::lexer::{lexer, tts_to_stream};
-use crate::parser::{const_parser, impl_parser, trait_parser, enum_parser, expr_parser, funcs_parser, type_parser, struct_parser};
+use crate::parser::program_parser;
 
 fn main() {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
-            .expect("Failed to read file");
+        .expect("Failed to read file");
 
     let (tts, mut errs) = lexer().parse_recovery(src.as_str());
 
@@ -31,11 +31,9 @@ fn main() {
         //println!("--- Flattened Token Trees ---\n{:?}", flattened_trees);
 
         //let len = src.chars().count();
-        let (ast, parse_errs) =
-            const_parser().parse_recovery(token_stream);
+        let (ast, parse_errs) = program_parser().parse_recovery(token_stream);
         parse_errs
-    }
-    else {
+    } else {
         Vec::new()
     };
 
