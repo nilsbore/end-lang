@@ -123,6 +123,14 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             .separated_by(just(Token::Comma))
             .allow_trailing();
 
+        let call_items = ident
+            .map_with_span(|name, span| (name, span))
+            .labelled("keyword arg")
+            .then_ignore(just(Token::Assign))
+            .then(expr.clone())
+            .separated_by(just(Token::Comma))
+            .allow_trailing();
+
         //let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
         //let atom = literal.map_with_span(|expr, span: Span| (expr, span));
         let list = items
@@ -189,22 +197,24 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             .clone()
             .or(access.clone())
             .then(
-                items.delimited_by(
+                call_items.delimited_by(
                     just(Token::Open(Delim::Paren)),
                     just(Token::Close(Delim::Paren)),
                 ), //.map_with_span(|args, span: Span| (args, span)),
                    //.or_not(),
             )
             //.map(|(expr, args): (_, Option<Vec<(_, Span)>>)| match args {
-            .map(|(expr, args): (_, Vec<(_, Span)>)| {
+            .map(|(expr, args)| {
                 // TODO: note that args may be empty
-                let call_span: Span = expr.1.start..args.last().unwrap().1.end;
-                (Expr::Call(Box::new(expr), args), call_span)
-            }); // Expr::Call(Box::new(expr), args));
-                // .foldl(|f, args| {
-                //     let span = f.1.start..args.1.end;
-                //     (Expr::Call(Box::new(f), args.0), span)
-                // });
+                //let call_span: Span = expr.1.start..args.last().unwrap().1.end;
+                Expr::Call(Box::new(expr), args)
+            })
+            .map_with_span(|val, span| (val, span));
+        // Expr::Call(Box::new(expr), args));
+        // .foldl(|f, args| {
+        //     let span = f.1.start..args.1.end;
+        //     (Expr::Call(Box::new(f), args.0), span)
+        // });
 
         let val = atom.or(call).or(access);
 

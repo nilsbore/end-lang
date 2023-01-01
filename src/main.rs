@@ -32,6 +32,7 @@ fn main() {
 
         //let len = src.chars().count();
         let (ast, parse_errs) = program_parser().parse_recovery(token_stream);
+        println!("{:?}", ast);
         parse_errs
     } else {
         Vec::new()
