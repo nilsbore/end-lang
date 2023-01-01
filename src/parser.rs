@@ -466,58 +466,53 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
     enum_
 }
 
-// pub fn match_parser() -> impl Parser<Token, MatchExpr, Error = Simple<Token>> + Clone {
-//     let ident = filter_map(|span, tok| match tok {
-//         Token::Ident(ident) => Ok(ident.clone()),
-//         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-//     });
+pub fn match_parser(
+    block: impl Parser<Token, Block, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, MatchExpr, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
 
-//     let variant = ident
-//         .clone()
-//         .map_with_span(|name, span| (name, span))
-//         .then(
-//             type_parser()
-//                 .separated_by(just(Token::Comma))
-//                 .allow_trailing()
-//                 .delimited_by(
-//                     just(Token::Open(Delim::Paren)),
-//                     just(Token::Close(Delim::Paren)),
-//                 )
-//                 .or_not(),
-//         )
-//         .map(|(name, values)| match values {
-//             Some(values) => EnumVariant { name, values },
-//             None => EnumVariant {
-//                 name,
-//                 values: Vec::new(),
-//             },
-//         });
+    let pattern = recursive(|pattern| {
+        ident
+            .clone()
+            .map_with_span(|name, span| (name, span))
+            .then(
+                pattern
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .delimited_by(
+                        just(Token::Open(Delim::Paren)),
+                        just(Token::Close(Delim::Paren)),
+                    ),
+            )
+            .map(|(ident, members)| Pattern { ident, members })
+    });
 
-//     let expr = expr_parser();
+    let expr = expr_parser();
 
-//     let enum_ = just(Token::Match)
-//         .then(expr)
-//         .then_ignore(just(Token::Colon))
-//         //.then(just(Token::Assign)) //.padded()
-//         //.then(item.repeated())
-//         .then(
-//             variant
-//                 .separated_by(just(Token::Pipe))
-//                 .allow_leading()
-//                 .delimited_by(
-//                     just(Token::Open(Delim::Block)),
-//                     just(Token::Close(Delim::Block)),
-//                 ),
-//         )
-//         .map(|((name, generics), variants)| MatchExpr {
-//             name,
-//             generics,
-//             variants,
-//         })
-//         .labelled("match expr");
+    let control_expr = block
+        .clone()
+        .map(|block| ControlExpr::Block(block))
+        .or(expr.clone().map(Box::new).map(ControlExpr::Expr));
 
-//     enum_
-// }
+    let match_ = just(Token::Match)
+        .ignore_then(expr.clone().map(Box::new))
+        .then_ignore(just(Token::Colon))
+        .then(
+            just(Token::Pipe)
+                .ignore_then(pattern)
+                .then_ignore(just(Token::Op(Op::RFlow)))
+                .then(control_expr.map(Box::new))
+                .map(|(pattern, body)| MatchBranch { pattern, body })
+                .repeated(),
+        )
+        .map(|(expr, branches)| MatchExpr { expr, branches })
+        .labelled("match expr");
+
+    match_
+}
 
 pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
     recursive(|type_| {
@@ -747,7 +742,7 @@ pub fn assign_expr_parser_rec(
     let control_expr = block
         .clone()
         .map(|block| ControlExpr::Block(block))
-        .or(expr.clone().map(|expr| ControlExpr::Expr(Box::new(expr))));
+        .or(expr.clone().map(Box::new).map(ControlExpr::Expr));
 
     let if_ = just(Token::If)
         .ignore_then(expr.clone())
@@ -804,12 +799,15 @@ pub fn assign_expr_parser_rec(
             })
         });
 
+    let match_ = match_parser(block.clone()).map(BlockExpr::Match);
+
     let block_ = block.clone().map(|block| BlockExpr::Block(block));
 
     expr_block.or(while_
         .or(block_)
         .or(if_)
         .or(for_)
+        .or(match_)
         .map(|block_expr| AssignExpr::BlockExpr(Box::new(block_expr))))
 }
 
