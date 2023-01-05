@@ -217,7 +217,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         //     (Expr::Call(Box::new(f), args.0), span)
         // });
 
-        let val = atom.or(call).or(access);
+        let val = call.or(access).or(atom);
 
         // Product ops (multiply and divide) have equal precedence
         let op = just(Token::Op(Op::Mul))
@@ -518,7 +518,11 @@ pub fn match_parser(
                 .then_ignore(just(Token::RFlow))
                 .then(control_expr.map(Box::new))
                 .map(|(pattern, body)| MatchBranch { pattern, body })
-                .repeated(),
+                .repeated()
+                .delimited_by(
+                    just(Token::Open(Delim::Block)),
+                    just(Token::Close(Delim::Block)),
+                ),
         )
         .map(|(expr, branches)| MatchExpr { expr, branches })
         .labelled("match expr");

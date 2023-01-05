@@ -11,8 +11,8 @@ def times(a: T, b: T) -> T for T: type = a * b
 #def times_lambda: (T, T) -> T for T: type = fn(a, b) => a*b
 
 def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type, L: size, M: size, N: size =
-    let C : tensor[T, M, L] = a #tensor[T, M, L]::zeros()
-    for i in range: #(0, N):
+    let C : tensor[T, M, L] = tensor[T, M, L]::zeros()
+    for i in range(0, N):
         pass
 
 def struct Person =
@@ -30,13 +30,13 @@ def enum Option for T: type =
     | Some(T)
 
 def isEmpty(v: Option[i32]) -> bool = match v:
-| None => False
-| Some(val) => True
+    | None => False
+    | Some(val) => True
 
 def isEmpty(v: Option[i32]) -> bool =
     match v:
-    | None => False
-    | Some(val) => True
+        | None => False
+        | Some(val) => True
     pass
 
 def trait Print for T: type =
@@ -65,7 +65,7 @@ def let_examples() -> () =
     let l: List[i32] = [1, 2, 3, 4, 5]
     # TODO: let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
 
+    let p = Person(name="joe", address="Main str 1", age=42)
+    #p.changeAddress("High road 2")
     let one = Vec3[f32]::ones()
 
-    let p = Person(name="joe", address="Main str 1", age=42)
-    #p.changeAddress("High str 2")
