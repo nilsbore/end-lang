@@ -47,7 +47,6 @@ pub enum Op {
     // Lists
     Dot,
     RArrow,
-    RFlow,
 }
 
 impl fmt::Display for Op {
@@ -70,7 +69,6 @@ impl fmt::Display for Op {
             Op::Xor => write!(f, "|"),
             Op::Dot => write!(f, "."),
             Op::RArrow => write!(f, "->"),
-            Op::RFlow => write!(f, "=>"),
         }
     }
 }
@@ -110,6 +108,7 @@ pub enum Token {
     Enum,
     Block,
     Wildcard,
+    RFlow,
 }
 
 impl fmt::Display for Token {
@@ -147,6 +146,7 @@ impl fmt::Display for Token {
             Token::Enum => write!(f, "enum"),
             Token::Block => write!(f, "block"),
             Token::Wildcard => write!(f, "_"),
+            Token::RFlow => write!(f, "=>"),
         }
     }
 }
@@ -198,6 +198,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
         });
 
         let ctrl = choice((
+            just("=>").to(Token::RFlow),
             just(',').to(Token::Comma),
             just("::").to(Token::DoubleColon),
             just(':').to(Token::Colon),
@@ -214,7 +215,6 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
         */
 
         let op = choice((
-            just("=>").to(Op::RFlow),
             just("==").to(Op::Eq),
             just('.').to(Op::Dot),
             just("!=").to(Op::NotEq),

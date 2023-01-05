@@ -127,6 +127,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             .map_with_span(|name, span| (name, span))
             .labelled("keyword arg")
             .then_ignore(just(Token::Assign))
+            .or_not()
             .then(expr.clone())
             .separated_by(just(Token::Comma))
             .allow_trailing();
@@ -495,7 +496,8 @@ pub fn match_parser(
                     .delimited_by(
                         just(Token::Open(Delim::Paren)),
                         just(Token::Close(Delim::Paren)),
-                    ),
+                    )
+                    .or_not(),
             )
             .map(|(ident, members)| Pattern { ident, members })
     });
@@ -513,7 +515,7 @@ pub fn match_parser(
         .then(
             just(Token::Pipe)
                 .ignore_then(pattern)
-                .then_ignore(just(Token::Op(Op::RFlow)))
+                .then_ignore(just(Token::RFlow))
                 .then(control_expr.map(Box::new))
                 .map(|(pattern, body)| MatchBranch { pattern, body })
                 .repeated(),
@@ -891,5 +893,6 @@ pub fn program_parser() -> impl Parser<Token, Program, Error = Simple<Token>> + 
         .or(trait_parser().map(Def::Trait))
         .or(const_parser().map(Def::Const))
         .repeated()
+        .then_ignore(end())
         .map(|defs| Program { defs })
 }
