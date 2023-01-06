@@ -246,6 +246,10 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         // Comparison ops (equal, not-equal) have equal precedence
         let op = just(Token::Op(Op::Eq))
             .to(BinaryOp::Eq)
+            .or(just(Token::Op(Op::Less)).to(BinaryOp::Less))
+            .or(just(Token::Op(Op::LessEq)).to(BinaryOp::LessEq))
+            .or(just(Token::Op(Op::More)).to(BinaryOp::Greater))
+            .or(just(Token::Op(Op::MoreEq)).to(BinaryOp::GreaterEq))
             .or(just(Token::Op(Op::NotEq)).to(BinaryOp::NotEq));
 
         let compare = sum
@@ -509,21 +513,21 @@ pub fn match_parser(
         .map(|block| ControlExpr::Block(block))
         .or(expr.clone().map(Box::new).map(ControlExpr::Expr));
 
+    let match_arms = just(Token::Pipe)
+        .ignore_then(pattern)
+        .then_ignore(just(Token::RFlow))
+        .then(control_expr.map(Box::new))
+        .map(|(pattern, body)| MatchBranch { pattern, body })
+        .repeated()
+        .delimited_by(
+            just(Token::Open(Delim::Block)),
+            just(Token::Close(Delim::Block)),
+        );
+
     let match_ = just(Token::Match)
         .ignore_then(expr.clone().map(Box::new))
         .then_ignore(just(Token::Colon))
-        .then(
-            just(Token::Pipe)
-                .ignore_then(pattern)
-                .then_ignore(just(Token::RFlow))
-                .then(control_expr.map(Box::new))
-                .map(|(pattern, body)| MatchBranch { pattern, body })
-                .repeated()
-                .delimited_by(
-                    just(Token::Open(Delim::Block)),
-                    just(Token::Close(Delim::Block)),
-                ),
-        )
+        .then(match_arms)
         .map(|(expr, branches)| MatchExpr { expr, branches })
         .labelled("match expr");
 
@@ -849,11 +853,12 @@ pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clon
             .labelled("assign");
 
         let let_ = let_parser_rec(block.clone());
-        let stmt = assign_expr
-            .clone()
-            .map(|expr| Statement::Expr(Box::new(expr)))
-            .or(let_.map(|let_| Statement::Let(Box::new(let_))))
-            .or(assign.map(|assign| Statement::Assign(Box::new(assign))));
+        let stmt = let_
+            .map(|let_| Statement::Let(Box::new(let_)))
+            .or(assign.map(|assign| Statement::Assign(Box::new(assign))))
+            .or(assign_expr
+                .clone()
+                .map(|expr| Statement::Expr(Box::new(expr))));
         let block = stmt
             .repeated()
             .delimited_by(

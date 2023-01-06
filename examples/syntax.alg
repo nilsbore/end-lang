@@ -39,6 +39,25 @@ def isEmpty(v: Option[i32]) -> bool =
         | Some(val) => True
     pass
 
+def ifTest(val: String) -> () =
+    if val == "one":
+        print(1)
+    elif val == "two":
+        print(2)
+    elif val == "three":
+        print(3)
+    else:
+        print("invalid")
+
+def assignTest() -> () =
+    let a = 2
+    a = 1
+
+def whileTest(iters: uint32) -> () =
+    let i = 0
+    while i < iters:
+        i = i + 1
+
 def trait Print for T: type =
     print: (T) -> ()
 

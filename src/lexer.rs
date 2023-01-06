@@ -234,7 +234,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
         ))
         .map(Token::Op);
 
-        let single_token = int.or(str_).or(ctrl).or(op).or(ident).map(TokenTree::Token);
+        let single_token = int.or(str_).or(op).or(ctrl).or(ident).map(TokenTree::Token);
 
         // Tokens surrounded by parentheses get turned into parenthesised token trees
         let parens_token_tree = tt
