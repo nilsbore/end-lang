@@ -518,16 +518,20 @@ pub fn match_parser(
         .then_ignore(just(Token::RFlow))
         .then(control_expr.map(Box::new))
         .map(|(pattern, body)| MatchBranch { pattern, body })
-        .repeated()
-        .delimited_by(
-            just(Token::Open(Delim::Block)),
-            just(Token::Close(Delim::Block)),
-        );
+        .repeated();
 
     let match_ = just(Token::Match)
         .ignore_then(expr.clone().map(Box::new))
         .then_ignore(just(Token::Colon))
-        .then(match_arms)
+        .then(
+            match_arms
+                .clone()
+                .delimited_by(
+                    just(Token::Open(Delim::Block)),
+                    just(Token::Close(Delim::Block)),
+                )
+                .or(match_arms),
+        )
         .map(|(expr, branches)| MatchExpr { expr, branches })
         .labelled("match expr");
 
