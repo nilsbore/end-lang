@@ -25,7 +25,8 @@ def struct Vec for T: type =
     y: T
     z: T
 
-def enum Option for T: type =
+#def enum Option for T: type =
+def enum Option for T: type = # trying comments
     | None
     | Some(T)
 
@@ -35,9 +36,8 @@ def isEmpty(v: Option[i32]) -> bool = match v:
 
 def isEmpty(v: Option[i32]) -> bool =
     match v:
-        | None => False
-        | Some(val) => True
-    pass
+    | None => False
+    | Some(val) => True
 
 def ifTest(val: String) -> () =
     if val == "one":
@@ -79,11 +79,12 @@ def let_examples() -> () =
     # let v: Vec3 of f32 = Vec3(x=1, y=2, z=3)
 
     # TODO: let f = fn x => x + 1
-    # let g = fn(x: i32) => x + 1
-
+    let i = 2 # let g = fn(x: i32) => x + 1
+    let i = 3
+    
     let l: List[i32] = [1, 2, 3, 4, 5]
     # TODO: let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
-
+    
     let p = Person(name="joe", address="Main str 1", age=42)
     #p.changeAddress("High road 2")
     let one = Vec3[f32]::ones()
