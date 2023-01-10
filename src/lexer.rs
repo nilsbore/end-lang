@@ -160,6 +160,15 @@ pub enum TokenTree {
 
 // A parser that turns pythonic code with semantic whitespace into a token tree
 pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char>> {
+    let comments = just("#")
+        .padded()
+        .then(
+            take_until(just("\n"))
+                .then(just("\n").padded().repeated())
+                .then(just("#").padded())
+                .repeated(),
+        )
+        .then(none_of("\n").repeated());
     let tt = recursive(|tt| {
         // Define some atomic tokens
         let int = text::int(10).from_str().unwrapped().map(Token::Int);
@@ -258,21 +267,31 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
             .delimited_by(just('{'), just('}'))
             .map(|tts| TokenTree::Tree(Delim::CurlyBrackets, tts));
 
-        let comment = just("#").then(take_until(just('\n'))).padded();
+        // let line_comment = just(" ")
+        //     .repeated()
+        //     .then(just("#"))
+        //     .then(take_until(just("\n")));
+        //.padded();
+        //let comment = just("#").then(take_until(just('\n'))).padded();
 
         single_token
             .or(parens_token_tree)
             //.or(token_tree2)
             .or(brackets_token_tree)
             .or(curly_token_tree)
-            .padded_by(comment.repeated())
+            .then_ignore(comments.clone().or_not())
             //.padded()
             //.repeated()
             .map_with_span(|tt, span| (tt, span))
     });
 
     // Whitespace indentation creates code block token trees
-    text::semantic_indentation(tt, |tts, span| (TokenTree::Tree(Delim::Block, tts), span))
+    comments
+        .clone()
+        .or_not()
+        .ignore_then(text::semantic_indentation(tt, |tts, span| {
+            (TokenTree::Tree(Delim::Block, tts), span)
+        }))
         .then_ignore(end())
 }
 
