@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 ariadne = "0.1.2"
 internment = "0.5"
-chumsky = { git = "https://github.com/zesterer/chumsky" }
+#chumsky = { git = "https://github.com/zesterer/chumsky" }
+chumsky = "0.9.2"
