@@ -13,5 +13,6 @@ Also, considering tools like co-pilot, it could signify the end of history for p
 * General: [nim](https://nim-lang.org/)
 * Trait system, unsafe: [rust](https://www.rust-lang.org/)
 * Memory model: [jakt](https://github.com/SerenityOS/jakt)
+* Memory model: [hylo](https://www.hylo-lang.org/)
 * Implementation: [tao](https://github.com/zesterer/tao)
 * Effect system: [koka](https://koka-lang.github.io/koka/doc/index.html)
