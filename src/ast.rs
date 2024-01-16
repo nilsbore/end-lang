@@ -58,9 +58,35 @@ pub enum Literal {
     Str(String), //Intern<String>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Generics {
     pub args: Vec<Item>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item {
+    pub name: String,
+    pub ty: Spanned<Type>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Struct {
+    // pub name: Spanned<String>,
+    // pub generics: Option<Generics>,
+    pub members: Vec<Item>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnumVariant {
+    pub name: Spanned<String>,
+    pub values: Vec<Spanned<Type>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Enum {
+    // pub name: Spanned<String>,
+    // pub generics: Option<Generics>,
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -70,10 +96,19 @@ pub enum Type {
     Unknown,
     //Named(String),
     Named(String, Vec<Spanned<Self>>),
-    List(Box<Spanned<Self>>),
-    Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    // List(Box<Spanned<Self>>),
+    // Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Tuple(Vec<Spanned<Self>>),
+    Enum(Vec<EnumVariant>),
+    Struct(Vec<Item>),
     Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DefType {
+    pub name: Spanned<String>,
+    pub generics: Option<Generics>,
+    pub ty: Spanned<Type>,
 }
 
 #[derive(Debug)]
@@ -83,17 +118,17 @@ pub struct QualifiedIdent {
     pub ident: Spanned<String>,
 }
 
-#[derive(Debug)]
-pub enum LExpr<TExpr> {
-    Error,
-    Ident(QualifiedIdent),
-    Call(Box<Spanned<TExpr>>, Vec<Spanned<Expr>>),
-    Member(Box<Spanned<TExpr>>, Spanned<String>),
-}
+// #[derive(Debug)]
+// pub enum LExpr<TExpr> {
+//     Error,
+//     Ident(QualifiedIdent),
+//     Call(Box<Spanned<TExpr>>, Vec<Spanned<Expr>>),
+//     Member(Box<Spanned<TExpr>>, Spanned<String>),
+// }
 
-pub struct LLExpr {
-    expr: Spanned<LExpr<LLExpr>>,
-}
+// pub struct LLExpr {
+//     expr: Spanned<LExpr<LLExpr>>,
+// }
 
 // An expression node in the AST. Children are spanned so we can generate useful runtime errors.
 #[derive(Debug)]
@@ -116,19 +151,6 @@ pub enum Expr {
 }
 
 #[derive(Debug)]
-pub struct Item {
-    pub name: String,
-    pub ty: Spanned<Type>,
-}
-
-#[derive(Debug)]
-pub struct Struct {
-    pub name: Spanned<String>,
-    pub generics: Option<Generics>,
-    pub members: Vec<Item>,
-}
-
-#[derive(Debug)]
 pub struct Trait {
     pub name: Spanned<String>,
     pub generics: Generics,
@@ -140,19 +162,6 @@ pub struct Impl {
     pub name: Spanned<String>,
     pub generic_args: Vec<Spanned<Type>>,
     pub funcs: Vec<Func>,
-}
-
-#[derive(Debug)]
-pub struct EnumVariant {
-    pub name: Spanned<String>,
-    pub values: Vec<Spanned<Type>>,
-}
-
-#[derive(Debug)]
-pub struct Enum {
-    pub name: Spanned<String>,
-    pub generics: Option<Generics>,
-    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug)]
@@ -267,8 +276,9 @@ pub struct Func {
 #[derive(Debug)]
 pub enum Def {
     Func(Func),
-    Enum(Enum),
-    Struct(Struct),
+    // Enum(Enum),
+    // Struct(Struct),
+    Type(DefType),
     Impl(Impl),
     Trait(Trait),
     Const(Const),

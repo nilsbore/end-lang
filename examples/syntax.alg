@@ -1,8 +1,8 @@
 # import a library
 #import file
 
-# ends with End statement or end of file
-#begin namespace Examples1
+# ends with close statement or end of file
+#open Examples1
 
 def answer: i32 = 42
 
@@ -15,18 +15,20 @@ def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type,
     for i in range(0, N):
         pass
 
-def struct Person =
-    name: String
-    address: String
-    age: u8
+def type Person = {
+    name: String,
+    address: String,
+    age: u8,
+}
 
-def struct Vec for T: type =
-    x: T
-    y: T
-    z: T
+def type Vec3 for T: type = {
+    x: T,
+    y: T,
+    z: T,
+}
 
 #def enum Option for T: type =
-def enum Option for T: type = # trying comments
+def type Option for T: type = # trying comments
     | None
     | Some(T)
 
@@ -53,24 +55,57 @@ def assignTest() -> () =
     let a = 2
     a = 1
 
-def whileTest(iters: uint32) -> () =
+def whileTest(iters: u32) -> () =
     let i = 0
     while i < iters:
         i = i + 1
 
-def trait Print for T: type =
-    print: (T) -> ()
+# NOTE: the trait definition just defines
+# what members and member function a type
+# should have
+def trait Print for T: type = {
+    print: (T) -> str,
+}
 
-def trait Add for T: type =
-    add: (T, T) -> T
+def trait ScreenPrint for T: Print {
+    screen_print: (T) -> (),
+}
 
-def impl Add for i32 =
-    def add(a: i32, b: i32) -> i32 =
-        a + b
+open ScreenPrint[T] for T: Print
+
+def screen_print(t: T) -> () =
+    print(t.print())
+
+close ScreenPrint[T]
+
+def trait Add for T: type = {
+    add: (T, T) -> T,
+}
+
+open Add[i32]
+
+def add(a: i32, b: i32) -> i32 =
+    a + b
+
+close Add[i32]
+
+open Add[Vec[T]] for T: Add
+
+def add(a: Vec[T], b: Vec[T]) -> Vec[T] =
+    let c = Vec::new()
+    for i, j in zip(a, b):
+        c.append(i+j)
+    return c
+
+close Add[Vec[T]]
+
+open Person
 
 def changeAddress(self: Person, address: String) -> () =
     #self.address = address
     pass
+
+close Person
 
 def let_examples() -> () =
 

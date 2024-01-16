@@ -288,7 +288,9 @@ pub fn generics_parser() -> impl Parser<Token, Generics, Error = Simple<Token>> 
     generics
 }
 
-pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Clone {
+pub fn struct_parser(
+    type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Spanned<Vec<Item>>, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
@@ -297,45 +299,32 @@ pub fn struct_parser() -> impl Parser<Token, Struct, Error = Simple<Token>> + Cl
     let item = ident
         .clone()
         .then_ignore(just(Token::Colon))
-        .then(type_parser())
+        .then(type_)
         .map(|(name, ty)| Item { name, ty });
 
-    let struct_ = just(Token::Def)
-        .ignore_then(just(Token::Struct))
-        .ignore_then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("struct name"),
+    item.separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(
+            just(Token::Open(Delim::Block)),
+            just(Token::Close(Delim::Block)),
         )
-        .then(generics_parser().or_not())
-        .then_ignore(just(Token::Assign))
-        //.then(just(Token::Assign)) //.padded()
-        //.then(item.repeated())
-        .then(
-            item.repeated().delimited_by(
-                just(Token::Open(Delim::Block)),
-                just(Token::Close(Delim::Block)),
-            ), /*
-               .recover_with(nested_delimiters(
-                   Token::Open(Delim::Block),
-                   Token::Close(Delim::Block),
-                   [
-                       (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                       (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
-                       (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
-                   ],
-                   |span| (Expr::Error, span),
-               )),
-               */
+        .delimited_by(
+            just(Token::Open(Delim::CurlyBrackets)),
+            just(Token::Close(Delim::CurlyBrackets)),
         )
-        .map(|((name, generics), members)| Struct {
-            name,
-            generics,
-            members,
-        })
-        .labelled("struct");
-
-    struct_
+        .map_with_span(|items, span| (items, span))
+    /*
+    .recover_with(nested_delimiters(
+        Token::Open(Delim::Block),
+        Token::Close(Delim::Block),
+        [
+            (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+            (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
+            (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+        ],
+        |span| (Expr::Error, span),
+    )),
+    */
 }
 
 pub fn trait_parser() -> impl Parser<Token, Trait, Error = Simple<Token>> + Clone {
@@ -424,7 +413,31 @@ pub fn impl_parser() -> impl Parser<Token, Impl, Error = Simple<Token>> + Clone 
     impl_
 }
 
-pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone {
+pub fn def_type_parser() -> impl Parser<Token, DefType, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
+    let deftype = just(Token::Def)
+        .ignore_then(just(Token::Type))
+        .ignore_then(
+            ident
+                .map_with_span(|name, span| (name, span))
+                .labelled("enum name"),
+        )
+        .then(generics_parser().or_not())
+        .then_ignore(just(Token::Assign))
+        .then(type_parser())
+        .map(|((name, generics), ty)| DefType { name, generics, ty })
+        .labelled("deftype");
+
+    deftype
+}
+
+pub fn enum_parser(
+    type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Spanned<Vec<EnumVariant>>, Error = Simple<Token>> + Clone {
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
@@ -434,7 +447,7 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
         .clone()
         .map_with_span(|name, span| (name, span))
         .then(
-            type_parser()
+            type_
                 .separated_by(just(Token::Comma))
                 .allow_trailing()
                 .delimited_by(
@@ -451,34 +464,14 @@ pub fn enum_parser() -> impl Parser<Token, Enum, Error = Simple<Token>> + Clone 
             },
         });
 
-    let enum_ = just(Token::Def)
-        .ignore_then(just(Token::Enum))
-        .ignore_then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("enum name"),
+    variant
+        .separated_by(just(Token::Pipe))
+        .allow_leading()
+        .delimited_by(
+            just(Token::Open(Delim::Block)),
+            just(Token::Close(Delim::Block)),
         )
-        .then(generics_parser().or_not())
-        .then_ignore(just(Token::Assign))
-        //.then(just(Token::Assign)) //.padded()
-        //.then(item.repeated())
-        .then(
-            variant
-                .separated_by(just(Token::Pipe))
-                .allow_leading()
-                .delimited_by(
-                    just(Token::Open(Delim::Block)),
-                    just(Token::Close(Delim::Block)),
-                ),
-        )
-        .map(|((name, generics), variants)| Enum {
-            name,
-            generics,
-            variants,
-        })
-        .labelled("enum");
-
-    enum_
+        .map_with_span(|v, span| (v, span))
 }
 
 pub fn match_parser(
@@ -539,78 +532,86 @@ pub fn match_parser(
 }
 
 pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
-    recursive(|type_| {
-        let ident = filter_map(|span, tok| match tok {
-            Token::Ident(ident) => Ok(ident.clone()),
-            _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-        });
+    recursive(|type_| type_parser_rec(type_))
+}
 
-        let generic_args = type_
-            .clone()
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
-            .delimited_by(
-                just(Token::Open(Delim::SquareBrackets)),
-                just(Token::Close(Delim::SquareBrackets)),
-            );
-        // Attempt to recover anything that looks like a function body but contains errors
-        /*
-        .recover_with(nested_delimiters(
-            Token::Open(Delim::SquareBrackets),
-            Token::Close(Delim::SquareBrackets),
-            [
-                (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                (Token::Open(Delim::Block), Token::Close(Delim::Block)),
-                (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
-            ],
-            |span| vec![(Type::Error, span)],
-        ))
-        */
+pub fn type_parser_rec(
+    type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
+) -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
 
-        let named = ident
-            .then(generic_args.or_not())
-            //.ok_or_else(|| Vec::new())
-            .map_with_span(|(name, generic_args), span: Span| match generic_args {
-                Some(args) => (Type::Named(name, args), span.clone()),
-                None => (Type::Named(name, Vec::new()), span.clone()),
-            })
-            .labelled("named type");
+    let generic_args = type_
+        .clone()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(
+            just(Token::Open(Delim::SquareBrackets)),
+            just(Token::Close(Delim::SquareBrackets)),
+        );
+    // Attempt to recover anything that looks like a function body but contains errors
+    /*
+    .recover_with(nested_delimiters(
+        Token::Open(Delim::SquareBrackets),
+        Token::Close(Delim::SquareBrackets),
+        [
+            (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+            (Token::Open(Delim::Block), Token::Close(Delim::Block)),
+            (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+        ],
+        |span| vec![(Type::Error, span)],
+    ))
+    */
 
-        let tuple_or_func = type_
-            .clone()
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
-            .delimited_by(
-                just(Token::Open(Delim::Paren)),
-                just(Token::Close(Delim::Paren)),
-            )
-            .then(
-                just(Token::Op(Op::RArrow))
-                    .ignore_then(type_.clone())
-                    .or_not(),
-            )
-            .map_with_span(|(args, maybe_rtn), span: Span| match maybe_rtn {
-                Some(rtn) => (Type::Func(args, Box::new(rtn)), span.clone()),
-                None => (Type::Tuple(args), span.clone()),
-            })
-            .labelled("function type");
+    let named = ident
+        .then(generic_args.or_not())
+        //.ok_or_else(|| Vec::new())
+        .map_with_span(|(name, generic_args), span: Span| match generic_args {
+            Some(args) => (Type::Named(name, args), span.clone()),
+            None => (Type::Named(name, Vec::new()), span.clone()),
+        })
+        .labelled("named type");
 
-        /*
-        let tuple =  type_.clone()
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
-            .delimited_by(
-                just(Token::Open(Delim::Paren)),
-                just(Token::Close(Delim::Paren)),
-            )
-            .map_with_span(|members, span: Span| {
-                (Type::Tuple(members), span.clone())
-            })
-            .labelled("tuple type");
-        */
+    let tuple_or_func = type_
+        .clone()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(
+            just(Token::Open(Delim::Paren)),
+            just(Token::Close(Delim::Paren)),
+        )
+        .then(
+            just(Token::Op(Op::RArrow))
+                .ignore_then(type_.clone())
+                .or_not(),
+        )
+        .map_with_span(|(args, maybe_rtn), span: Span| match maybe_rtn {
+            Some(rtn) => (Type::Func(args, Box::new(rtn)), span.clone()),
+            None => (Type::Tuple(args), span.clone()),
+        })
+        .labelled("function type");
 
-        named.or(tuple_or_func) // or(tuple).or(func)
-    })
+    // we need to make these be spanned
+    let enum_ = enum_parser(type_.clone()).map(|(e, span)| (Type::Enum(e), span));
+    let struct_ = struct_parser(type_.clone()).map(|(s, span)| (Type::Struct(s), span));
+
+    /*
+    let tuple =  type_.clone()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(
+            just(Token::Open(Delim::Paren)),
+            just(Token::Close(Delim::Paren)),
+        )
+        .map_with_span(|members, span: Span| {
+            (Type::Tuple(members), span.clone())
+        })
+        .labelled("tuple type");
+    */
+
+    named.or(tuple_or_func).or(enum_).or(struct_) // or(tuple).or(func)
 }
 
 pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
@@ -900,8 +901,9 @@ pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clon
 pub fn program_parser() -> impl Parser<Token, Program, Error = Simple<Token>> + Clone {
     funcs_parser()
         .map(Def::Func)
-        .or(enum_parser().map(Def::Enum))
-        .or(struct_parser().map(Def::Struct))
+        // .or(enum_parser().map(Def::Enum))
+        // .or(struct_parser().map(Def::Struct))
+        .or(def_type_parser().map(Def::Type))
         .or(impl_parser().map(Def::Impl))
         .or(trait_parser().map(Def::Trait))
         .or(const_parser().map(Def::Const))
