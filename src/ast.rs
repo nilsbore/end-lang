@@ -111,11 +111,22 @@ pub struct DefType {
     pub ty: Spanned<Type>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QualifiedIdent {
     pub path: Vec<Spanned<String>>,
     pub ty: Option<Spanned<Type>>,
     pub ident: Spanned<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Open {
+    pub ident: QualifiedIdent,
+    pub generics: Option<Generics>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Close {
+    pub ident: QualifiedIdent,
 }
 
 // #[derive(Debug)]
@@ -279,9 +290,11 @@ pub enum Def {
     // Enum(Enum),
     // Struct(Struct),
     Type(DefType),
-    Impl(Impl),
+    // Impl(Impl),
     Trait(Trait),
     Const(Const),
+    Open(Open),
+    Close(Close),
 }
 
 #[derive(Debug)]
