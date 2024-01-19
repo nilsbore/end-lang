@@ -280,10 +280,10 @@ pub fn struct_parser(
 
     item.separated_by(just(Token::Comma))
         .allow_trailing()
-        .delimited_by(
-            just(Token::Open(Delim::Block)),
-            just(Token::Close(Delim::Block)),
-        )
+        // .delimited_by(
+        //     just(Token::Open(Delim::Block)),
+        //     just(Token::Close(Delim::Block)),
+        // )
         .delimited_by(
             just(Token::Open(Delim::CurlyBrackets)),
             just(Token::Close(Delim::CurlyBrackets)),
@@ -327,21 +327,31 @@ pub fn trait_parser() -> impl Parser<Token, Trait, Error = Simple<Token>> + Clon
         //.then(just(Token::Assign)) //.padded()
         //.then(item.repeated())
         .then(
-            item.repeated().delimited_by(
-                just(Token::Open(Delim::Block)),
-                just(Token::Close(Delim::Block)),
-            ), /*
-               .recover_with(nested_delimiters(
-                   Token::Open(Delim::Block),
-                   Token::Close(Delim::Block),
-                   [
-                       (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
-                       (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
-                       (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
-                   ],
-                   |span| (Expr::Error, span),
-               )),
-               */
+            item.separated_by(just(Token::Comma))
+                .allow_trailing()
+                // .delimited_by(
+                //     just(Token::Open(Delim::Block)),
+                //     just(Token::Close(Delim::Block)),
+                // )
+                .delimited_by(
+                    just(Token::Open(Delim::CurlyBrackets)),
+                    just(Token::Close(Delim::CurlyBrackets)),
+                ), //     repeated().delimited_by(
+                   //     just(Token::Open(Delim::Block)),
+                   //     just(Token::Close(Delim::Block)),
+                   // ),
+                   /*
+                   .recover_with(nested_delimiters(
+                       Token::Open(Delim::Block),
+                       Token::Close(Delim::Block),
+                       [
+                           (Token::Open(Delim::Paren), Token::Close(Delim::Paren)),
+                           (Token::Open(Delim::SquareBrackets), Token::Close(Delim::SquareBrackets)),
+                           (Token::Open(Delim::CurlyBrackets), Token::Close(Delim::CurlyBrackets)),
+                       ],
+                       |span| (Expr::Error, span),
+                   )),
+                   */
         )
         .map(|((name, generics), members)| Trait {
             name,
@@ -514,19 +524,11 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
 pub fn type_parser_rec(
     type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
-    let ident = filter_map(|span, tok| match tok {
-        Token::Ident(ident) => Ok(ident.clone()),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    });
+    // let ident = filter_map(|span, tok| match tok {
+    //     Token::Ident(ident) => Ok(ident.clone()),
+    //     _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    // });
 
-    let generic_args = type_
-        .clone()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .delimited_by(
-            just(Token::Open(Delim::SquareBrackets)),
-            just(Token::Close(Delim::SquareBrackets)),
-        );
     // Attempt to recover anything that looks like a function body but contains errors
     /*
     .recover_with(nested_delimiters(
@@ -544,14 +546,17 @@ pub fn type_parser_rec(
     // FIXME: this should be qualified ident instead, and that
     // needs to take type as input since it might be generic
     // that means that we need a _rec version of qualified_ident
-    let named = ident
-        .then(generic_args.or_not())
-        //.ok_or_else(|| Vec::new())
-        .map_with_span(|(name, generic_args), span: Span| match generic_args {
-            Some(args) => (Type::Named(name, args), span.clone()),
-            None => (Type::Named(name, Vec::new()), span.clone()),
-        })
-        .labelled("named type");
+    let universe_type = just(Token::Type).map_with_span(|_, span| (Type::UniverseType, span));
+    // let named = ident
+    //     .then(generic_args.or_not())
+    //     //.ok_or_else(|| Vec::new())
+    //     .map_with_span(|(name, generic_args), span: Span| match generic_args {
+    //         Some(args) => (Type::Named(name, args), span.clone()),
+    //         None => (Type::Named(name, Vec::new()), span.clone()),
+    //     })
+    //     .labelled("named type");
+    let qualified_ident =
+        qualified_ident_parser_rec(type_.clone()).map(|(v, s)| (Type::Ident(v), s));
 
     let tuple_or_func = type_
         .clone()
@@ -590,7 +595,11 @@ pub fn type_parser_rec(
         .labelled("tuple type");
     */
 
-    named.or(tuple_or_func).or(enum_).or(struct_) // or(tuple).or(func)
+    universe_type
+        .or(qualified_ident)
+        .or(tuple_or_func)
+        .or(enum_)
+        .or(struct_) // or(tuple).or(func)
 }
 
 pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
@@ -892,27 +901,46 @@ pub fn qualified_ident_parser_rec(
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
     });
+    let generic_args = type_
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .delimited_by(
+            just(Token::Open(Delim::SquareBrackets)),
+            just(Token::Close(Delim::SquareBrackets)),
+        );
+    // let named = ident
+    //     .then(generic_args.or_not())
+    //     //.ok_or_else(|| Vec::new())
+    //     .map_with_span(|(name, generic_args), span: Span| match generic_args {
+    //         Some(args) => (Type::Named(name, args), span.clone()),
+    //         None => (Type::Named(name, Vec::new()), span.clone()),
+    //     })
+    //     .labelled("named type");
 
     ident
         .map_with_span(|name, span| (name, span))
         .labelled("ident path")
         .separated_by(just(Token::DoubleColon))
-        // .allow_trailing()
-        .then_ignore(just(Token::DoubleColon))
-        .or_not()
-        .then(type_.then_ignore(just(Token::DoubleColon)).or_not())
+        .at_least(1) // .allow_trailing()
+        .then(generic_args.or_not())
         .then(
-            ident
+            just(Token::DoubleColon)
+                .ignore_then(ident)
                 .map_with_span(|name, span| (name, span))
-                .labelled("ident name"),
+                .labelled("ident name")
+                .or_not(),
         )
-        .map(|((path, ty), ident)| match path {
+        .map(|((path, type_args), ident)| match type_args {
             None => QualifiedIdent {
-                path: Vec::new(),
-                ty,
+                path: path,
+                type_args: Vec::new(),
                 ident,
             },
-            Some(path) => QualifiedIdent { path, ty, ident },
+            Some(type_args) => QualifiedIdent {
+                path,
+                type_args,
+                ident,
+            },
         })
         // .map(Expr::Ident) //|ident| Expr::Ident(ident))
         // TODO: improve this??

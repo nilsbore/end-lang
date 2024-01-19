@@ -1,4 +1,5 @@
-def struct Person =
-    name: String
-    address: String
-    age: u8
+def type Person = {
+    name: String,
+    address: String,
+    age: u8,
+}

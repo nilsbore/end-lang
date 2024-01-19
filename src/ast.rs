@@ -95,9 +95,11 @@ pub enum Type {
     Error,
     Unknown,
     //Named(String),
-    Named(String, Vec<Spanned<Self>>),
+    // Named(String, Vec<Spanned<Self>>),
+    Ident(QualifiedIdent),
     // List(Box<Spanned<Self>>),
     // Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    UniverseType,
     Tuple(Vec<Spanned<Self>>),
     Enum(Vec<EnumVariant>),
     Struct(Vec<Item>),
@@ -114,8 +116,9 @@ pub struct DefType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct QualifiedIdent {
     pub path: Vec<Spanned<String>>,
-    pub ty: Option<Spanned<Type>>,
-    pub ident: Spanned<String>,
+    pub type_args: Vec<Spanned<Type>>,
+    // pub ty: Spanned<Type>,
+    pub ident: Option<Spanned<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

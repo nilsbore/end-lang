@@ -67,7 +67,7 @@ def trait Print for T: type = {
     print: (T) -> str,
 }
 
-def trait ScreenPrint for T: Print {
+def trait ScreenPrint for T: Print = {
     screen_print: (T) -> (),
 }
 
@@ -93,7 +93,7 @@ open Add[Vec[T]] for T: Add
 
 def add(a: Vec[T], b: Vec[T]) -> Vec[T] =
     let c = Vec::new()
-    for i, j in zip(a, b):
+    for i in zip(a, b):
         c.append(i+j)
     return c
 
