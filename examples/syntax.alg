@@ -11,7 +11,7 @@ def times(a: T, b: T) -> T for T: type = a * b
 #def times_lambda: (T, T) -> T for T: type = fn(a, b) => a*b
 
 def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type, L: size, M: size, N: size =
-    let C : tensor[T, M, L] = tensor[T, M, L]::zeros()
+    let C : tensor[T, M, L] = tensor::[T, M, L]::zeros()
     for i in range(0, N):
         pass
 
@@ -122,5 +122,5 @@ def let_examples() -> () =
     
     let p = Person(name="joe", address="Main str 1", age=42)
     #p.changeAddress("High road 2")
-    let one = Vec3[f32]::ones()
+    let one = Vec3::[f32]::ones()
 

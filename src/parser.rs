@@ -92,7 +92,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         .labelled("value");
 
         let qualified_ident =
-            qualified_ident_parser().map(|(ident, span)| (Expr::Ident(ident), span));
+            qualified_ident_parser_expr().map(|(ident, span)| (Expr::QualifiedIdent(ident), span));
 
         let items = expr
             .clone()
@@ -170,9 +170,9 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             )
             .map_with_span(|(expr, member), span| (Expr::Member(Box::new(expr), member), span));
 
-        let call = atom
+        let call = access
             .clone()
-            .or(access.clone())
+            .or(atom.clone())
             .then(
                 call_items.delimited_by(
                     just(Token::Open(Delim::Paren)),
@@ -916,6 +916,56 @@ pub fn qualified_ident_parser_rec(
     //         None => (Type::Named(name, Vec::new()), span.clone()),
     //     })
     //     .labelled("named type");
+
+    ident
+        .map_with_span(|name, span| (name, span))
+        .labelled("ident path")
+        .separated_by(just(Token::DoubleColon))
+        .at_least(1) // .allow_trailing()
+        .then(generic_args.or_not())
+        .then(
+            just(Token::DoubleColon)
+                .ignore_then(ident)
+                .map_with_span(|name, span| (name, span))
+                .labelled("ident name")
+                .or_not(),
+        )
+        .map(|((path, type_args), ident)| match type_args {
+            None => QualifiedIdent {
+                path: path,
+                type_args: Vec::new(),
+                ident,
+            },
+            Some(type_args) => QualifiedIdent {
+                path,
+                type_args,
+                ident,
+            },
+        })
+        // .map(Expr::Ident) //|ident| Expr::Ident(ident))
+        // TODO: improve this??
+        .map_with_span(|name, span| (name, span))
+        .labelled("ident name")
+}
+
+pub fn qualified_ident_parser_expr(
+) -> impl Parser<Token, Spanned<QualifiedIdent>, Error = Simple<Token>> + Clone {
+    // let type_ = type_parser();
+
+    let type_ = type_parser();
+    let ident = filter_map(|span, tok| match tok {
+        Token::Ident(ident) => Ok(ident.clone()),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+    let generic_args = just(Token::DoubleColon).ignore_then(
+        type_
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .delimited_by(
+                just(Token::Open(Delim::SquareBrackets)),
+                just(Token::Close(Delim::SquareBrackets)),
+            ),
+    );
 
     ident
         .map_with_span(|name, span| (name, span))
