@@ -1,3 +1,6 @@
-def impl Add for i32 =
-    def add(a: i32, b: i32) -> i32 =
-        a + b
+open Add[i32]
+
+def add(a: i32, b: i32) -> i32 =
+    a + b
+
+close Add[i32]

@@ -121,10 +121,20 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
                 (Expr::List(items), span)
             });
 
+        let object = call_items
+            .clone()
+            .delimited_by(
+                just(Token::Open(Delim::CurlyBrackets)),
+                just(Token::Close(Delim::CurlyBrackets)),
+            )
+            .map(|args| Expr::Object(args))
+            .map_with_span(|val, span| (val, span));
+
         let atom = literal
             .map_with_span(|expr, span: Span| (expr, span))
             .or(qualified_ident)
             .or(list)
+            .or(object)
             // .or(
             //     expr.clone()
             //         .delimited_by(just(Token::Open(Delim::Paren)), just(Token::Close(Delim::Paren)))

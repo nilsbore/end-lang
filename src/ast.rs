@@ -150,6 +150,7 @@ pub enum Expr {
     Error,
     Literal(Literal),
     List(Vec<Spanned<Self>>),
+    Object(Vec<(Option<Spanned<String>>, Spanned<Self>)>),
     //Local(String),
     Ident(Spanned<String>),
     QualifiedIdent(QualifiedIdent),

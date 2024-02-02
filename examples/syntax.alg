@@ -121,6 +121,11 @@ def let_examples() -> () =
     # TODO: let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
     
     let p = Person(name="joe", address="Main str 1", age=42)
+    let p2: Person = {
+        name="joe",
+        address="Main str 1",
+        age=42,
+    }
     #p.changeAddress("High road 2")
     let one = Vec3::[f32]::ones()
 

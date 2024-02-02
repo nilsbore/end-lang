@@ -1,3 +1,3 @@
-def enum Option for T: type =
+def type Option for T: type =
     | None
     | Some(T)
