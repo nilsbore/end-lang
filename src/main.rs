@@ -10,18 +10,15 @@ mod utils;
 use crate::lexer::{lexer, tts_to_stream};
 use crate::parser::program_parser;
 
-fn main() {
-    let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
-        .expect("Failed to read file");
+fn parse(src: &str) -> Option<ast::Program> {
+    let (tts, errs) = lexer().parse_recovery(src);
 
-    let (tts, mut errs) = lexer().parse_recovery(src.as_str());
-
-    let parse_errs = if let Some(tts) = tts {
+    let (ast, parse_errs) = if let Some(tts) = tts {
         //println!("--- Token Trees ---\n{:#?}", tts);
 
         // Next, flatten
         let eoi = 0..src.chars().count();
-        let mut token_stream = tts_to_stream(eoi, tts);
+        let token_stream = tts_to_stream(eoi, tts);
 
         // At this point, we have a token stream that can be fed into the main parser! Because this is just an example,
         // we're instead going to just collect the token stream into a vector and print it.
@@ -33,9 +30,9 @@ fn main() {
         //let len = src.chars().count();
         let (ast, parse_errs) = program_parser().parse_recovery(token_stream);
         println!("{:#?}", ast);
-        parse_errs
+        (ast, parse_errs)
     } else {
-        Vec::new()
+        (None, Vec::new())
     };
 
     errs.into_iter()
@@ -107,4 +104,16 @@ fn main() {
 
             report.finish().print(Source::from(&src)).unwrap();
         });
+
+    ast
+}
+
+fn check(ast: ast::Program) -> Option<ast::Program> {
+    Some(ast)
+}
+
+fn main() {
+    let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
+        .expect("Failed to read file");
+    let ast = parse(&src);
 }
