@@ -1,9 +1,10 @@
 use ariadne::{Color, Fmt, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
-use chumsky::stream::Stream;
+// use chumsky::stream::Stream;
 use std::{env, fs};
 
 mod ast;
+mod checker;
 mod lexer;
 mod parser;
 mod utils;
@@ -116,4 +117,6 @@ fn main() {
     let src = fs::read_to_string(env::args().nth(1).expect("Expected file argument"))
         .expect("Failed to read file");
     let ast = parse(&src);
+    let Some(ast) = ast else { return };
+    check(ast);
 }

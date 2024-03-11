@@ -531,6 +531,19 @@ pub fn type_parser() -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>>
     recursive(|type_| type_parser_rec(type_))
 }
 
+pub fn literal_type_parser() -> impl Parser<Token, LiteralType, Error = Simple<Token>> + Clone {
+    select! {
+        //Token::Null => Expr::Value(Value::Null),
+        Token::BoolType => LiteralType::Bool,
+        Token::IntType => LiteralType::Int,
+        Token::NatType => LiteralType::Nat,
+        Token::RealType => LiteralType::Real,
+        Token::CharType => LiteralType::Char,
+        Token::StrType => LiteralType::Str,
+    }
+    .labelled("value")
+}
+
 pub fn type_parser_rec(
     type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
 ) -> impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone {
@@ -565,6 +578,8 @@ pub fn type_parser_rec(
     //         None => (Type::Named(name, Vec::new()), span.clone()),
     //     })
     //     .labelled("named type");
+    let literal_type =
+        literal_type_parser().map_with_span(|literal, span| (Type::Literal(literal), span));
     let qualified_ident =
         qualified_ident_parser_rec(type_.clone()).map(|(v, s)| (Type::Ident(v), s));
 
@@ -606,6 +621,7 @@ pub fn type_parser_rec(
     */
 
     universe_type
+        .or(literal_type)
         .or(qualified_ident)
         .or(tuple_or_func)
         .or(enum_)

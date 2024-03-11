@@ -1,5 +1,7 @@
+use std::fmt;
+
 use crate::utils::*;
-use internment::Intern;
+// use internment::Intern;
 
 /*
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -89,6 +91,29 @@ pub struct Enum {
     pub variants: Vec<EnumVariant>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LiteralType {
+    Bool,
+    Nat,
+    Int,
+    Real,
+    Char,
+    Str, //Intern<String>),
+}
+
+impl fmt::Display for LiteralType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            LiteralType::Char => write!(f, "Char"),
+            LiteralType::Str => write!(f, "String"),
+            LiteralType::Int => write!(f, "Int"),
+            LiteralType::Nat => write!(f, "Nat"),
+            LiteralType::Real => write!(f, "Real"),
+            LiteralType::Bool => write!(f, "Bool"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
     // Generated only by parser errors.
@@ -96,6 +121,7 @@ pub enum Type {
     Unknown,
     //Named(String),
     // Named(String, Vec<Spanned<Self>>),
+    Literal(LiteralType),
     Ident(QualifiedIdent),
     // List(Box<Spanned<Self>>),
     // Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
@@ -104,6 +130,22 @@ pub enum Type {
     Enum(Vec<EnumVariant>),
     Struct(Vec<Item>),
     Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            Type::Error => write!(f, "Error!"),
+            Type::Unknown => write!(f, "Unknown!"),
+            Type::Ident(ident) => write!(f, "{}", ident),
+            Type::UniverseType => write!(f, "Universe type"),
+            Type::Tuple(elements) => write!(f, "({:?})", elements),
+            Type::Enum(variants) => write!(f, "{:?}", variants),
+            Type::Struct(members) => write!(f, "{:?}", members),
+            Type::Func(rtn, args) => write!(f, "({:?}) -> {:?}", rtn, args),
+            Type::Literal(literal) => write!(f, "{}", literal),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +161,37 @@ pub struct QualifiedIdent {
     pub type_args: Vec<Spanned<Type>>,
     // pub ty: Spanned<Type>,
     pub ident: Option<Spanned<String>>,
+}
+
+impl fmt::Display for QualifiedIdent {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}",
+            self.path
+                .clone()
+                .into_iter()
+                .map(|s| s.0)
+                .collect::<Vec<String>>()
+                .join("::")
+        )?;
+        if self.type_args.len() > 0 {
+            write!(
+                f,
+                "[{}]",
+                self.type_args
+                    .clone()
+                    .into_iter()
+                    .map(|s| format!("{}", s.0))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            )?;
+        }
+        if let Some(ref ident) = self.ident {
+            write!(f, ".{}", ident.0)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
