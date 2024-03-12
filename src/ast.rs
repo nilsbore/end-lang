@@ -130,6 +130,34 @@ pub enum Type {
     Enum(Vec<EnumVariant>),
     Struct(Vec<Item>),
     Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
+    Existential(String),               // unknown variable, to be decided!
+    Quantification(String, Box<Self>), // generics!! does the type tree end in existentials with the same name?
+}
+
+impl Type {
+    // what about existentials? can they not resolve to quantification?
+    fn is_monotype(&self) -> bool {
+        match self {
+            Type::Quantification(..) => false,
+            Type::Func(args, rtn) => {
+                args.into_iter().fold(true, |a, b| a && b.0.is_monotype()) && rtn.0.is_monotype()
+            }
+            Type::Tuple(elements) => elements
+                .into_iter()
+                .fold(true, |a, b| a && b.0.is_monotype()),
+            Type::Struct(items) => items
+                .into_iter()
+                .fold(true, |a, b| a && b.ty.0.is_monotype()),
+            Type::Enum(variants) => variants.into_iter().fold(true, |a, b| {
+                a && b
+                    .values
+                    .clone()
+                    .into_iter()
+                    .fold(true, |c, d| c && d.0.is_monotype())
+            }),
+            _ => true,
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -144,6 +172,8 @@ impl fmt::Display for Type {
             Type::Struct(members) => write!(f, "{:?}", members),
             Type::Func(rtn, args) => write!(f, "({:?}) -> {:?}", rtn, args),
             Type::Literal(literal) => write!(f, "{}", literal),
+            Type::Existential(ex) => write!(f, "{}^", ex),
+            Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
         }
     }
 }
