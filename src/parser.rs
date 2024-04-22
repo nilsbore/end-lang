@@ -583,23 +583,18 @@ pub fn type_parser_rec(
     let qualified_ident =
         qualified_ident_parser_rec(type_.clone()).map(|(v, s)| (Type::Ident(v), s));
 
-    let tuple_or_func = type_
+    let tuple_list = type_
         .clone()
         .separated_by(just(Token::Comma))
         .allow_trailing()
         .delimited_by(
             just(Token::Open(Delim::Paren)),
             just(Token::Close(Delim::Paren)),
-        )
-        .then(
-            just(Token::Op(Op::RArrow))
-                .ignore_then(type_.clone())
-                .or_not(),
-        )
-        .map_with_span(|(args, maybe_rtn), span: Span| match maybe_rtn {
-            Some(rtn) => (Type::Func(args, Box::new(rtn)), span.clone()),
-            None => (Type::Tuple(args), span.clone()),
-        })
+        );
+
+    let tuple = tuple_list
+        .clone()
+        .map_with_span(|args, span: Span| (Type::Tuple(args), span.clone()))
         .labelled("function type");
 
     // we need to make these be spanned
@@ -620,12 +615,48 @@ pub fn type_parser_rec(
         .labelled("tuple type");
     */
 
-    universe_type
+    // enum shouldn't be a problem:
+    // Some(Person^Print) | None
+    // func will be a problem:
+    // (a: str) -> A^B
+    // the solution should be to let
+    // ^ have the highest priority
+
+    // Let's think of these as operators instead
+    // we have the following:
+    // ->, ^
+    // ^ needs to have highest priority
+    // -> 2nd highest
+
+    let simple_type = universe_type
         .or(literal_type)
         .or(qualified_ident)
-        .or(tuple_or_func)
+        .or(tuple)
         .or(enum_)
-        .or(struct_) // or(tuple).or(func)
+        .or(struct_); // or(tuple).or(func)
+
+    let intersection_type = simple_type
+        .clone()
+        .then(just(Token::Op(Op::Hat)).ignore_then(simple_type.repeated()))
+        .foldl(|a, b| {
+            let span = a.1.start..b.1.end;
+            (Type::Intersection(Box::new(a.0), Box::new(b.0)), span)
+        });
+
+    let func = intersection_type
+        .clone()
+        .then(just(Token::Op(Op::RArrow)).ignore_then(intersection_type.repeated()))
+        .foldl(|a, b| {
+            let span = a.1.start..b.1.end;
+            (Type::Func(Box::new(a), Box::new(b)), span)
+        });
+
+    // let func = tuple_list
+    //     .then(just(Token::Op(Op::RArrow)).ignore_then(type_.clone()))
+    //     .map_with_span(|(args, rtn), span: Span| (Type::Func(args, Box::new(rtn)), span.clone()))
+    //     .labelled("function type");
+
+    func
 }
 
 pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone {
@@ -949,22 +980,25 @@ pub fn qualified_ident_parser_rec(
         .separated_by(just(Token::DoubleColon))
         .at_least(1) // .allow_trailing()
         .then(generic_args.or_not())
+        .then_ignore(just(Token::DoubleColon))
+        .or_not()
         .then(
-            just(Token::DoubleColon)
-                .ignore_then(ident)
+            ident
                 .map_with_span(|name, span| (name, span))
-                .labelled("ident name")
-                .or_not(),
+                .labelled("ident name"), // .or_not(),
         )
-        .map(|((path, type_args), ident)| match type_args {
+        .map(|(path, ident)| match path {
             None => QualifiedIdent {
-                path: path,
+                path: Vec::new(),
                 type_args: Vec::new(),
                 ident,
             },
-            Some(type_args) => QualifiedIdent {
-                path,
-                type_args,
+            Some(path) => QualifiedIdent {
+                path: path.0,
+                type_args: match path.1 {
+                    None => Vec::new(),
+                    Some(type_args) => type_args,
+                },
                 ident,
             },
         })
@@ -999,22 +1033,25 @@ pub fn qualified_ident_parser_expr(
         .separated_by(just(Token::DoubleColon))
         .at_least(1) // .allow_trailing()
         .then(generic_args.or_not())
+        .then_ignore(just(Token::DoubleColon))
+        .or_not()
         .then(
-            just(Token::DoubleColon)
-                .ignore_then(ident)
+            ident
                 .map_with_span(|name, span| (name, span))
-                .labelled("ident name")
-                .or_not(),
+                .labelled("ident name"), // .or_not(),
         )
-        .map(|((path, type_args), ident)| match type_args {
+        .map(|(path, ident)| match path {
             None => QualifiedIdent {
-                path: path,
+                path: Vec::new(),
                 type_args: Vec::new(),
                 ident,
             },
-            Some(type_args) => QualifiedIdent {
-                path,
-                type_args,
+            Some(path) => QualifiedIdent {
+                path: path.0,
+                type_args: match path.1 {
+                    None => Vec::new(),
+                    Some(type_args) => type_args,
+                },
                 ident,
             },
         })

@@ -47,6 +47,7 @@ pub enum Op {
     // Lists
     Dot,
     RArrow,
+    Hat,
 }
 
 impl fmt::Display for Op {
@@ -69,6 +70,7 @@ impl fmt::Display for Op {
             Op::Xor => write!(f, "|"),
             Op::Dot => write!(f, "."),
             Op::RArrow => write!(f, "->"),
+            Op::Hat => write!(f, "^"),
         }
     }
 }
@@ -257,6 +259,7 @@ pub fn lexer() -> impl Parser<char, Vec<Spanned<TokenTree>>, Error = Simple<char
             just("||").to(Op::Or),
             just('+').to(Op::Add),
             just("->").to(Op::RArrow),
+            just("^").to(Op::Hat),
             just('-').to(Op::Sub),
             just('*').to(Op::Mul),
             just('/').to(Op::Div),

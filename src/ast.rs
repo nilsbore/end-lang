@@ -125,11 +125,12 @@ pub enum Type {
     Ident(QualifiedIdent),
     // List(Box<Spanned<Self>>),
     // Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    Intersection(Box<Self>, Box<Self>),
     UniverseType,
     Tuple(Vec<Spanned<Self>>),
     Enum(Vec<EnumVariant>),
     Struct(Vec<Item>),
-    Func(Vec<Spanned<Self>>, Box<Spanned<Self>>),
+    Func(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Existential(String),               // unknown variable, to be decided!
     Quantification(String, Box<Self>), // generics!! does the type tree end in existentials with the same name?
 }
@@ -140,7 +141,8 @@ impl Type {
         match self {
             Type::Quantification(..) => false,
             Type::Func(args, rtn) => {
-                args.into_iter().fold(true, |a, b| a && b.0.is_monotype()) && rtn.0.is_monotype()
+                // args.into_iter().fold(true, |a, b| a && b.0.is_monotype()) && rtn.0.is_monotype()
+                args.0.is_monotype() && rtn.0.is_monotype()
             }
             Type::Tuple(elements) => elements
                 .into_iter()
@@ -155,6 +157,7 @@ impl Type {
                     .into_iter()
                     .fold(true, |c, d| c && d.0.is_monotype())
             }),
+            Type::Intersection(a, b) => a.is_monotype() && b.is_monotype(),
             _ => true,
         }
     }
@@ -170,10 +173,11 @@ impl fmt::Display for Type {
             Type::Tuple(elements) => write!(f, "({:?})", elements),
             Type::Enum(variants) => write!(f, "{:?}", variants),
             Type::Struct(members) => write!(f, "{:?}", members),
-            Type::Func(rtn, args) => write!(f, "({:?}) -> {:?}", rtn, args),
+            Type::Func(rtn, args) => write!(f, "({}) -> {}", rtn.0, args.0),
             Type::Literal(literal) => write!(f, "{}", literal),
             Type::Existential(ex) => write!(f, "{}^", ex),
             Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
+            Type::Intersection(a, b) => write!(f, "{}^{}", a, b),
         }
     }
 }
@@ -190,21 +194,23 @@ pub struct QualifiedIdent {
     pub path: Vec<Spanned<String>>,
     pub type_args: Vec<Spanned<Type>>,
     // pub ty: Spanned<Type>,
-    pub ident: Option<Spanned<String>>,
+    pub ident: Spanned<String>,
 }
 
 impl fmt::Display for QualifiedIdent {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(
-            f,
-            "{}",
-            self.path
-                .clone()
-                .into_iter()
-                .map(|s| s.0)
-                .collect::<Vec<String>>()
-                .join("::")
-        )?;
+        if self.path.len() > 0 {
+            write!(
+                f,
+                "{}",
+                self.path
+                    .clone()
+                    .into_iter()
+                    .map(|s| s.0)
+                    .collect::<Vec<String>>()
+                    .join("::")
+            )?;
+        }
         if self.type_args.len() > 0 {
             write!(
                 f,
@@ -217,9 +223,7 @@ impl fmt::Display for QualifiedIdent {
                     .join(", ")
             )?;
         }
-        if let Some(ref ident) = self.ident {
-            write!(f, ".{}", ident.0)?;
-        }
+        write!(f, ".{}", self.ident.0)?;
         Ok(())
     }
 }
