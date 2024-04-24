@@ -3,79 +3,6 @@ use crate::lexer::*;
 use crate::utils::*;
 use chumsky::prelude::*; //{prelude::*, BoxStream, Flat};
 
-// pub fn lexpr_parser_rec<TExpr>(
-//     expr: impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone,
-// ) -> impl Parser<Token, Spanned<LExpr<TExpr>>, Error = Simple<Token>> + Clone {
-//     let ident = filter_map(|span, tok| match tok {
-//         Token::Ident(ident) => Ok(ident.clone()),
-//         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-//     });
-//     let type_ = type_parser();
-
-//     let qualified_ident = ident
-//         .map_with_span(|name, span| (name, span))
-//         .labelled("ident path")
-//         .separated_by(just(Token::DoubleColon))
-//         .then_ignore(just(Token::DoubleColon))
-//         .or_not()
-//         .then(type_.then_ignore(just(Token::DoubleColon)).or_not())
-//         .then(
-//             ident
-//                 .map_with_span(|name, span| (name, span))
-//                 .labelled("ident name"),
-//         )
-//         .map(|((path, ty), ident)| match path {
-//             None => QualifiedIdent {
-//                 path: Vec::new(),
-//                 ty,
-//                 ident,
-//             },
-//             Some(path) => QualifiedIdent { path, ty, ident },
-//         });
-
-//     let items = expr
-//         .clone()
-//         .separated_by(just(Token::Comma))
-//         .allow_trailing();
-
-//     //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
-//     let access = qualified_ident
-//         .clone()
-//         .then_ignore(just(Token::Op(Op::Dot)))
-//         .then(
-//             ident
-//                 .map_with_span(|name, span| (name, span))
-//                 .labelled("member name"),
-//         )
-//         .map_with_span(|(expr, member), span| (LExpr::Member(Box::new(expr), member), span));
-
-//     let call = qualified_ident
-//         .clone()
-//         .or(access.clone())
-//         .then(
-//             items.delimited_by(
-//                 just(Token::Open(Delim::Paren)),
-//                 just(Token::Close(Delim::Paren)),
-//             ), //.map_with_span(|args, span: Span| (args, span)),
-//                //.or_not(),
-//         )
-//         //.map(|(expr, args): (_, Option<Vec<(_, Span)>>)| match args {
-//         .map(|(expr, args): (_, Vec<(_, Span)>)| {
-//             let call_span: Span = expr.1.start..args.last().unwrap().1.end;
-//             (Expr::Call(Box::new(expr), args), call_span)
-//         }); // Expr::Call(Box::new(expr), args));
-//             // .foldl(|f, args| {
-//             //     let span = f.1.start..args.1.end;
-//             //     (Expr::Call(Box::new(f), args.0), span)
-//             // });
-
-//     qualified_ident.or(access).or(call)
-// }
-
-// pub fn llexpr_parser() -> impl Parser<Token, LLExpr, Error = Simple<Token>> + Clone {
-//     recursive(|expr| lexpr_parser_rec(expr)).map(|expr| LLExpr { expr })
-// }
-
 pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>> + Clone {
     recursive(|expr| {
         let ident = filter_map(|span, tok| match tok {
@@ -92,7 +19,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         .labelled("value");
 
         let qualified_ident =
-            qualified_ident_parser_expr().map(|(ident, span)| (Expr::QualifiedIdent(ident), span));
+            qualified_ident_parser().map(|(ident, span)| (Expr::QualifiedIdent(ident), span));
 
         let items = expr
             .clone()
@@ -580,8 +507,7 @@ pub fn type_parser_rec(
     //     .labelled("named type");
     let literal_type =
         literal_type_parser().map_with_span(|literal, span| (Type::Literal(literal), span));
-    let qualified_ident =
-        qualified_ident_parser_rec(type_.clone()).map(|(v, s)| (Type::Ident(v), s));
+    let qualified_type = qualified_type_parser_rec(type_.clone()).map(|(v, s)| (Type::Ident(v), s));
 
     let tuple_list = type_
         .clone()
@@ -630,14 +556,14 @@ pub fn type_parser_rec(
 
     let simple_type = universe_type
         .or(literal_type)
-        .or(qualified_ident)
+        .or(qualified_type)
         .or(tuple)
         .or(enum_)
         .or(struct_); // or(tuple).or(func)
 
     let intersection_type = simple_type
         .clone()
-        .then(just(Token::Op(Op::Hat)).ignore_then(simple_type.repeated()))
+        .then(just(Token::Op(Op::Hat)).ignore_then(simple_type).repeated())
         .foldl(|a, b| {
             let span = a.1.start..b.1.end;
             (Type::Intersection(Box::new(a.0), Box::new(b.0)), span)
@@ -645,7 +571,11 @@ pub fn type_parser_rec(
 
     let func = intersection_type
         .clone()
-        .then(just(Token::Op(Op::RArrow)).ignore_then(intersection_type.repeated()))
+        .then(
+            just(Token::Op(Op::RArrow))
+                .ignore_then(intersection_type)
+                .repeated(),
+        )
         .foldl(|a, b| {
             let span = a.1.start..b.1.end;
             (Type::Func(Box::new(a), Box::new(b)), span)
@@ -666,7 +596,7 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
     });
 
     let item = ident
-        .clone()
+        // .clone()
         .then_ignore(just(Token::Colon))
         .then(type_parser())
         .map(|(name, ty)| Item { name, ty });
@@ -682,12 +612,10 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
         )
         .labelled("function args");
 
+    let qualified_ident = qualified_ident_parser();
+
     let func = just(Token::Def)
-        .ignore_then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("function name"),
-        )
+        .ignore_then(qualified_ident)
         .then(args)
         .then_ignore(just(Token::Op(Op::RArrow)))
         .then(type_parser())
@@ -726,8 +654,8 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
             //     )),
             assign_expr_parser(),
         )
-        .map(|((((name, args), rtn), generics), body)| Func {
-            name,
+        .map(|((((ident, args), rtn), generics), body)| Func {
+            ident,
             args,
             rtn,
             generics,
@@ -943,15 +871,15 @@ pub fn block_parser() -> impl Parser<Token, Block, Error = Simple<Token>> + Clon
     })
 }
 
-pub fn qualified_ident_parser(
-) -> impl Parser<Token, Spanned<QualifiedIdent>, Error = Simple<Token>> + Clone {
+pub fn qualified_type_parser(
+) -> impl Parser<Token, Spanned<QualifiedType>, Error = Simple<Token>> + Clone {
     let type_ = type_parser();
-    qualified_ident_parser_rec(type_)
+    qualified_type_parser_rec(type_)
 }
 
-pub fn qualified_ident_parser_rec(
+pub fn qualified_type_parser_rec(
     type_: impl Parser<Token, Spanned<Type>, Error = Simple<Token>> + Clone,
-) -> impl Parser<Token, Spanned<QualifiedIdent>, Error = Simple<Token>> + Clone {
+) -> impl Parser<Token, Spanned<QualifiedType>, Error = Simple<Token>> + Clone {
     // let type_ = type_parser();
 
     let ident = filter_map(|span, tok| match tok {
@@ -980,27 +908,12 @@ pub fn qualified_ident_parser_rec(
         .separated_by(just(Token::DoubleColon))
         .at_least(1) // .allow_trailing()
         .then(generic_args.or_not())
-        .then_ignore(just(Token::DoubleColon))
-        .or_not()
-        .then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("ident name"), // .or_not(),
-        )
-        .map(|(path, ident)| match path {
-            None => QualifiedIdent {
-                path: Vec::new(),
+        .map(|(path, type_args)| match type_args {
+            None => QualifiedType {
+                path,
                 type_args: Vec::new(),
-                ident,
             },
-            Some(path) => QualifiedIdent {
-                path: path.0,
-                type_args: match path.1 {
-                    None => Vec::new(),
-                    Some(type_args) => type_args,
-                },
-                ident,
-            },
+            Some(type_args) => QualifiedType { path, type_args },
         })
         // .map(Expr::Ident) //|ident| Expr::Ident(ident))
         // TODO: improve this??
@@ -1008,53 +921,47 @@ pub fn qualified_ident_parser_rec(
         .labelled("ident name")
 }
 
-pub fn qualified_ident_parser_expr(
+pub fn qualified_ident_parser(
 ) -> impl Parser<Token, Spanned<QualifiedIdent>, Error = Simple<Token>> + Clone {
     // let type_ = type_parser();
 
-    let type_ = type_parser();
+    let qualified_type = qualified_type_parser();
     let ident = filter_map(|span, tok| match tok {
         Token::Ident(ident) => Ok(ident.clone()),
         _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    });
-    let generic_args = just(Token::DoubleColon).ignore_then(
-        type_
-            .separated_by(just(Token::Comma))
-            .allow_trailing()
-            .delimited_by(
-                just(Token::Open(Delim::SquareBrackets)),
-                just(Token::Close(Delim::SquareBrackets)),
-            ),
-    );
+    })
+    .map_with_span(|ident, span| (ident, span));
 
-    ident
-        .map_with_span(|name, span| (name, span))
-        .labelled("ident path")
-        .separated_by(just(Token::DoubleColon))
-        .at_least(1) // .allow_trailing()
-        .then(generic_args.or_not())
-        .then_ignore(just(Token::DoubleColon))
-        .or_not()
-        .then(
-            ident
-                .map_with_span(|name, span| (name, span))
-                .labelled("ident name"), // .or_not(),
-        )
-        .map(|(path, ident)| match path {
-            None => QualifiedIdent {
-                path: Vec::new(),
-                type_args: Vec::new(),
-                ident,
-            },
-            Some(path) => QualifiedIdent {
-                path: path.0,
-                type_args: match path.1 {
-                    None => Vec::new(),
-                    Some(type_args) => type_args,
+    qualified_type
+        .then(just(Token::DoubleColon).ignore_then(ident).or_not())
+        .map(
+            |(ty, ident)| match (ty.0.type_args.len(), ty.0.path.len(), ident) {
+                (0, 1, None) => QualifiedIdent {
+                    ty: None,
+                    ident: ty.0.path[0].clone(),
                 },
-                ident,
+                (0, 2.., None) => {
+                    // let (path, last) = ty.0.path.split_at(ty.0.path.len() - 1);
+                    let mut path = ty.0.path.clone();
+                    let last = path.split_off(path.len() - 1);
+                    QualifiedIdent {
+                        ty: Some((
+                            QualifiedType {
+                                path,
+                                type_args: Vec::new(),
+                            },
+                            ty.1,
+                        )),
+                        ident: last[0].clone(),
+                    }
+                }
+                (_, _, Some(ident)) => QualifiedIdent {
+                    ty: Some(ty),
+                    ident,
+                },
+                (_, _, None) => panic!("Idents can currently not be generic"), // Err(Simple::expected_input_found(ty, Vec::new(), Some(ty.1))),
             },
-        })
+        )
         // .map(Expr::Ident) //|ident| Expr::Ident(ident))
         // TODO: improve this??
         .map_with_span(|name, span| (name, span))
@@ -1063,16 +970,16 @@ pub fn qualified_ident_parser_expr(
 
 pub fn open_parser() -> impl Parser<Token, Open, Error = Simple<Token>> + Clone {
     just(Token::Begin)
-        .ignore_then(qualified_ident_parser())
+        .ignore_then(type_parser())
         .then(generics_parser().or_not())
-        .map(|((ident, _span), generics)| Open { ident, generics })
+        .map(|(ty, generics)| Open { ty, generics })
         .labelled("open namespace")
 }
 
 pub fn close_parser() -> impl Parser<Token, Close, Error = Simple<Token>> + Clone {
     just(Token::End)
-        .ignore_then(qualified_ident_parser())
-        .map(|(ident, _span)| Close { ident })
+        .ignore_then(type_parser())
+        .map(|ty| Close { ty })
         .labelled("close namespace")
 }
 

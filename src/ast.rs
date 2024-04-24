@@ -122,7 +122,7 @@ pub enum Type {
     //Named(String),
     // Named(String, Vec<Spanned<Self>>),
     Literal(LiteralType),
-    Ident(QualifiedIdent),
+    Ident(QualifiedType),
     // List(Box<Spanned<Self>>),
     // Dict(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Intersection(Box<Self>, Box<Self>),
@@ -144,6 +144,10 @@ impl Type {
                 // args.into_iter().fold(true, |a, b| a && b.0.is_monotype()) && rtn.0.is_monotype()
                 args.0.is_monotype() && rtn.0.is_monotype()
             }
+            Type::Ident(ident) => ident
+                .type_args
+                .iter()
+                .fold(true, |a, b| a && b.0.is_monotype()),
             Type::Tuple(elements) => elements
                 .into_iter()
                 .fold(true, |a, b| a && b.0.is_monotype()),
@@ -190,14 +194,18 @@ pub struct DefType {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct QualifiedIdent {
+pub struct QualifiedType {
     pub path: Vec<Spanned<String>>,
     pub type_args: Vec<Spanned<Type>>,
-    // pub ty: Spanned<Type>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QualifiedIdent {
+    pub ty: Option<Spanned<QualifiedType>>,
     pub ident: Spanned<String>,
 }
 
-impl fmt::Display for QualifiedIdent {
+impl fmt::Display for QualifiedType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.path.len() > 0 {
             write!(
@@ -223,20 +231,19 @@ impl fmt::Display for QualifiedIdent {
                     .join(", ")
             )?;
         }
-        write!(f, ".{}", self.ident.0)?;
         Ok(())
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Open {
-    pub ident: QualifiedIdent,
+    pub ty: Spanned<Type>,
     pub generics: Option<Generics>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Close {
-    pub ident: QualifiedIdent,
+    pub ty: Spanned<Type>,
 }
 
 // #[derive(Debug)]
@@ -385,7 +392,8 @@ pub enum AssignExpr {
 
 #[derive(Debug)]
 pub struct Func {
-    pub name: Spanned<String>, //SrcNode<Ident>,
+    // pub name: Spanned<String>, //SrcNode<Ident>,
+    pub ident: Spanned<QualifiedIdent>,
     //pub generics: Generics,
     //pub ty_hint: SrcNode<Type>,
     pub args: Vec<Item>,

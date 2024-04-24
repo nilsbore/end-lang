@@ -177,7 +177,13 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
         Type::Error => true,
         Type::Unknown => true,
         // TODO: make this work with proper idents
-        Type::Ident(ref ident) => context.has_variable(&ident.ident.0),
+        Type::Ident(ref ident) => {
+            context.has_variable(&ident.path[0].0)
+                && ident
+                    .type_args
+                    .iter()
+                    .fold(true, |a, b| a && is_well_formed(context, &b.0))
+        }
         Type::Func(args, rtn) => {
             // args.iter()
             //     .fold(true, |first, a| first && is_well_formed(context, &a.0))
@@ -208,7 +214,14 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
 fn apply_context(a: Type, context: &Context) -> Type {
     match a {
         Type::Literal(_) => a,
-        Type::Ident(_) => a,
+        Type::Ident(ident) => Type::Ident(QualifiedType {
+            path: ident.path,
+            type_args: ident
+                .type_args
+                .into_iter()
+                .map(|a| (apply_context(a.0, context), a.1))
+                .collect(),
+        }),
         Type::UniverseType => a,
         Type::Error => a,
         Type::Unknown => a,
