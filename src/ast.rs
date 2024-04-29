@@ -393,7 +393,8 @@ pub enum AssignExpr {
 #[derive(Debug)]
 pub struct Func {
     // pub name: Spanned<String>, //SrcNode<Ident>,
-    pub ident: Spanned<QualifiedIdent>,
+    pub ty: Option<Spanned<Type>>,
+    pub ident: String,
     //pub generics: Generics,
     //pub ty_hint: SrcNode<Type>,
     pub args: Vec<Item>,

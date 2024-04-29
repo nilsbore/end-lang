@@ -596,7 +596,7 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
     });
 
     let item = ident
-        // .clone()
+        .clone()
         .then_ignore(just(Token::Colon))
         .then(type_parser())
         .map(|(name, ty)| Item { name, ty });
@@ -612,10 +612,12 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
         )
         .labelled("function args");
 
-    let qualified_ident = qualified_ident_parser();
+    // let qualified_ident = qualified_ident_parser();
+    let ty = type_parser();
 
     let func = just(Token::Def)
-        .ignore_then(qualified_ident)
+        .ignore_then(ty.then_ignore(just(Token::Op(Op::Dot))).or_not())
+        .then(ident)
         .then(args)
         .then_ignore(just(Token::Op(Op::RArrow)))
         .then(type_parser())
@@ -654,7 +656,8 @@ pub fn funcs_parser() -> impl Parser<Token, Func, Error = Simple<Token>> + Clone
             //     )),
             assign_expr_parser(),
         )
-        .map(|((((ident, args), rtn), generics), body)| Func {
+        .map(|(((((ty, ident), args), rtn), generics), body)| Func {
+            ty,
             ident,
             args,
             rtn,
@@ -933,35 +936,10 @@ pub fn qualified_ident_parser(
     .map_with_span(|ident, span| (ident, span));
 
     qualified_type
-        .then(just(Token::DoubleColon).ignore_then(ident).or_not())
-        .map(
-            |(ty, ident)| match (ty.0.type_args.len(), ty.0.path.len(), ident) {
-                (0, 1, None) => QualifiedIdent {
-                    ty: None,
-                    ident: ty.0.path[0].clone(),
-                },
-                (0, 2.., None) => {
-                    // let (path, last) = ty.0.path.split_at(ty.0.path.len() - 1);
-                    let mut path = ty.0.path.clone();
-                    let last = path.split_off(path.len() - 1);
-                    QualifiedIdent {
-                        ty: Some((
-                            QualifiedType {
-                                path,
-                                type_args: Vec::new(),
-                            },
-                            ty.1,
-                        )),
-                        ident: last[0].clone(),
-                    }
-                }
-                (_, _, Some(ident)) => QualifiedIdent {
-                    ty: Some(ty),
-                    ident,
-                },
-                (_, _, None) => panic!("Idents can currently not be generic"), // Err(Simple::expected_input_found(ty, Vec::new(), Some(ty.1))),
-            },
-        )
+        .then_ignore(just(Token::Op(Op::Dot)))
+        .or_not()
+        .then(ident)
+        .map(|(ty, ident)| QualifiedIdent { ty, ident })
         // .map(Expr::Ident) //|ident| Expr::Ident(ident))
         // TODO: improve this??
         .map_with_span(|name, span| (name, span))

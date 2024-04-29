@@ -11,7 +11,7 @@ def times(a: T, b: T) -> T for T: type = a * b
 #def times_lambda: (T, T) -> T for T: type = fn(a, b) => a*b
 
 def mmul(a: tensor[T, M, N], b: tensor[T, N, L]) -> tensor[T, M, L] for T: type, L: size, M: size, N: size =
-    let C : tensor[T, M, L] = tensor[T, M, L]::zeros()
+    let C : tensor[T, M, L] = tensor[T, M, L].zeros()
     for i in range(0, N):
         pass
 
@@ -91,8 +91,8 @@ close Add^i32
 
 # type of i32 is now i32^Add, so it is a subtype of i32 and Add
 
-def Add^Vec[T]::add() for T: Add =
-    let c = Vec::new()
+def Add^Vec[T].add(a: Vec[T], b: Vec[T]) -> T for T: Add =
+    let c = Vec.new()
     for i in zip(a, b):
         c.append(i+j)
     return c
@@ -101,14 +101,14 @@ def Add^Vec[T]::add() for T: Add =
 open Add^Vec[T] for T: Add
 
 def add(a: Vec[T], b: Vec[T]) -> Vec[T] =
-    let c = Vec::new()
+    let c = Vec.new()
     for i in zip(a, b):
         c.append(i+j)
     return c
 
 close Add^Vec[T]
 
-def Person::changeAddress(self: Person, address: String) -> () =
+def Person.changeAddress(self: Person, address: String) -> () =
     pass
 
 # equivalent to
@@ -140,5 +140,5 @@ def let_examples() -> () =
         age=42,
     }
     #p.changeAddress("High road 2")
-    let one = Vec3[f32]::ones()
+    let one = Vec3[f32].ones()
 
