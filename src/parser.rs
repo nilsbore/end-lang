@@ -19,7 +19,7 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
         .labelled("value");
 
         let qualified_ident =
-            qualified_ident_parser().map(|(ident, span)| (Expr::QualifiedIdent(ident), span));
+            qualified_type_parser().map(|(ident, span)| (Expr::QualifiedIdent(ident), span));
 
         let items = expr
             .clone()
@@ -918,28 +918,6 @@ pub fn qualified_type_parser_rec(
             },
             Some(type_args) => QualifiedType { path, type_args },
         })
-        // .map(Expr::Ident) //|ident| Expr::Ident(ident))
-        // TODO: improve this??
-        .map_with_span(|name, span| (name, span))
-        .labelled("ident name")
-}
-
-pub fn qualified_ident_parser(
-) -> impl Parser<Token, Spanned<QualifiedIdent>, Error = Simple<Token>> + Clone {
-    // let type_ = type_parser();
-
-    let qualified_type = qualified_type_parser();
-    let ident = filter_map(|span, tok| match tok {
-        Token::Ident(ident) => Ok(ident.clone()),
-        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
-    })
-    .map_with_span(|ident, span| (ident, span));
-
-    qualified_type
-        .then_ignore(just(Token::Op(Op::Dot)))
-        .or_not()
-        .then(ident)
-        .map(|(ty, ident)| QualifiedIdent { ty, ident })
         // .map(Expr::Ident) //|ident| Expr::Ident(ident))
         // TODO: improve this??
         .map_with_span(|name, span| (name, span))

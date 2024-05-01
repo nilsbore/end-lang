@@ -199,12 +199,6 @@ pub struct QualifiedType {
     pub type_args: Vec<Spanned<Type>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct QualifiedIdent {
-    pub ty: Option<Spanned<QualifiedType>>,
-    pub ident: Spanned<String>,
-}
-
 impl fmt::Display for QualifiedType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         if self.path.len() > 0 {
@@ -266,8 +260,8 @@ pub enum Expr {
     List(Vec<Spanned<Self>>),
     Object(Vec<(Option<Spanned<String>>, Spanned<Self>)>),
     //Local(String),
-    Ident(Spanned<String>),
-    QualifiedIdent(QualifiedIdent),
+    // Ident(Spanned<String>),
+    QualifiedIdent(QualifiedType),
     //Let(String, Box<Spanned<Self>>, Box<Spanned<Self>>),
     //Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
