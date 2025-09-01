@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::ast::*;
-use crate::utils::Span;
+use crate::utils::{Span, Spanned};
 use std::iter::zip;
 // use crate::utils::*;
 
@@ -438,10 +438,17 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         //<:Var
         (Type::Ident(alpha1), Type::Ident(alpha2)) => {
             print_rule("<:Var");
-            if is_well_formed(context, a) && alpha1 == alpha2 {
+            let well_formed = is_well_formed(context, a);
+            // Compare types semantically, ignoring span information
+            let equal = alpha1.path.len() == alpha2.path.len()
+                && alpha1.path.iter().zip(alpha2.path.iter()).all(|(a, b)| a.0 == b.0)
+                && alpha1.type_args.len() == alpha2.type_args.len()
+                && alpha1.type_args.iter().zip(alpha2.type_args.iter()).all(|(a, b)| a.0 == b.0);
+            
+            if well_formed && equal {
                 return context.clone();
             } else {
-                panic!();
+                panic!("Cannot subtype {} <: {}", alpha1, alpha2);
             }
         }
         //<:Exvar
@@ -672,18 +679,20 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
             print_rule("->E");
             let (func_type, theta) = synthesizes_to(state, context, &e1.0);
             
-            // For now, handle simple single-argument calls
-            // TODO: Implement full multi-argument and named argument support
-            if args.len() == 1 {
-                let arg = &args[0].1; // Get the expression, ignore the optional name
-                return application_synthesizes_to(state, &theta, &apply_context(func_type, &theta), &arg.0);
-            } else if args.is_empty() {
-                // No arguments - this might be a nullary function call
-                return (func_type, theta);
-            } else {
-                // Multiple arguments - need to handle currying or tuple arguments
-                // For now, just panic with a helpful message
-                panic!("Multi-argument function calls not yet implemented");
+            match args.len() {
+                0 => {
+                    // No arguments - nullary function call
+                    (func_type, theta)
+                }
+                1 => {
+                    // Single argument - use existing application logic
+                    let arg = &args[0].1; // Get the expression, ignore the optional name for now
+                    application_synthesizes_to(state, &theta, &apply_context(func_type, &theta), &arg.0)
+                }
+                _ => {
+                    // Multiple arguments - implement currying or multi-parameter functions
+                    synthesize_multi_argument_call(state, &theta, &apply_context(func_type, &theta), args)
+                }
             }
         }
         // Missing patterns - add basic implementations
@@ -816,6 +825,49 @@ fn find_field_in_type(ty: &Type, field_name: &str) -> Option<Type> {
                 .or_else(|| find_field_in_type(b, field_name))
         }
         _ => None,
+    }
+}
+
+/// Handle multi-argument function calls with tuple-based arguments
+fn synthesize_multi_argument_call(
+    state: &mut State,
+    context: &Context, 
+    func_type: &Type,
+    args: &[(Option<Spanned<String>>, Spanned<Expr>)]
+) -> (Type, Context) {
+    print_helper("multi_call", format!("{} args", args.len()), format!("{}", func_type), context);
+    
+    // TODO: Handle named arguments properly when name_opt.is_some()
+    for (name_opt, _) in args {
+        if name_opt.is_some() {
+            panic!("Named arguments not yet implemented in multi-argument calls");
+        }
+    }
+    
+    // Match against function type to get expected argument tuple and return type
+    match func_type {
+        Type::Func(arg_type, ret_type) => {
+            // Synthesize each argument
+            let mut gamma = context.clone();
+            let mut arg_types = Vec::new();
+            
+            for (_, arg_expr) in args {
+                let (arg_type, new_gamma) = synthesizes_to(state, &gamma, &arg_expr.0);
+                arg_types.push((arg_type, arg_expr.1.clone()));
+                gamma = new_gamma;
+            }
+            
+            // Create tuple type from synthesized arguments
+            let actual_arg_tuple = Type::Tuple(arg_types);
+            
+            // Check if our tuple is compatible with the function's expected argument type
+            let final_gamma = subtype(state, &gamma, &actual_arg_tuple, &arg_type.0);
+            
+            (ret_type.0.clone(), final_gamma)
+        }
+        _ => {
+            panic!("Cannot call non-function type: {}", func_type);
+        }
     }
 }
 
@@ -1110,10 +1162,28 @@ pub fn check_program(program: &Program) -> Result<(), String> {
             Def::Func(func) => {
                 // Add function signature to context
                 let func_name = &func.ident;
-                let func_type = Type::Func(
-                    Box::new((Type::Unknown, Span::default())), // Will be properly inferred later
-                    Box::new((func.rtn.0.clone(), func.rtn.1.clone())),
-                );
+                
+                // For multi-parameter functions, represent as (A, B, C) -> D using tuples
+                let func_type = if func.args.is_empty() {
+                    // Nullary function: just the return type
+                    func.rtn.0.clone()
+                } else if func.args.len() == 1 {
+                    // Single parameter: A -> D
+                    Type::Func(
+                        Box::new(func.args[0].ty.clone()),
+                        Box::new(func.rtn.clone()),
+                    )
+                } else {
+                    // Multi-parameter: (A, B, C) -> D
+                    let param_types: Vec<Spanned<Type>> = func.args.iter()
+                        .map(|item| item.ty.clone())
+                        .collect();
+                    Type::Func(
+                        Box::new((Type::Tuple(param_types), Span::default())),
+                        Box::new(func.rtn.clone()),
+                    )
+                };
+                
                 context = context.add(ContextElement::TypedVariable(
                     func_name.clone(),
                     func_type
@@ -1468,6 +1538,37 @@ def computedObject: ComputedType = {
     comparison = 10 > 5,
     value = 42,
 }
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_single_argument_function_call() {
+        let source = r#"
+def double(x: i32) -> i32 = x * 2
+
+def result: i32 = double(5)
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_multi_argument_function_call() {
+        let source = r#"
+def add(a: i32, b: i32) -> i32 = a + b
+
+def result: i32 = add(5, 3)
+"#;
+        // This should work with our new tuple-based multi-argument system
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nullary_function_call() {
+        let source = r#"
+def getAnswer() -> i32 = 42
+
+def result: i32 = getAnswer()
 "#;
         assert!(parse_and_check(source).is_ok());
     }
