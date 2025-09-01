@@ -10,6 +10,7 @@ mod parser;
 mod utils;
 use crate::lexer::{lexer, tts_to_stream};
 use crate::parser::program_parser;
+use crate::checker::check_program;
 
 fn parse(src: &str) -> Option<ast::Program> {
     let (tts, errs) = lexer().parse_recovery(src);
@@ -110,7 +111,16 @@ fn parse(src: &str) -> Option<ast::Program> {
 }
 
 fn check(ast: ast::Program) -> Option<ast::Program> {
-    Some(ast)
+    match check_program(&ast) {
+        Ok(()) => {
+            println!("Type checking completed successfully!");
+            Some(ast)
+        }
+        Err(error) => {
+            eprintln!("Type checking failed: {}", error);
+            None
+        }
+    }
 }
 
 fn main() {

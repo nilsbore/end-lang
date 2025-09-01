@@ -35,6 +35,13 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             .separated_by(just(Token::Comma))
             .allow_trailing();
 
+        let object_items = ident
+            .map_with_span(|name, span| (name, span))
+            .then_ignore(just(Token::Assign))
+            .then(expr.clone())
+            .separated_by(just(Token::Comma))
+            .allow_trailing();
+
         //let ident = select! { Token::Ident(ident) => ident.clone() }.labelled("identifier");
         //let atom = literal.map_with_span(|expr, span: Span| (expr, span));
         let list = items
@@ -45,10 +52,10 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             )
             .map(|items: Vec<(_, Span)>| {
                 let span: Span = items.first().unwrap().1.start..items.last().unwrap().1.end;
-                (Expr::List(items), span)
+                (Expr::Tuple(items), span)
             });
 
-        let object = call_items
+        let object = object_items
             .clone()
             .delimited_by(
                 just(Token::Open(Delim::CurlyBrackets)),

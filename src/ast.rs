@@ -257,8 +257,8 @@ pub struct Close {
 pub enum Expr {
     Error,
     Literal(Literal),
-    List(Vec<Spanned<Self>>),
-    Object(Vec<(Option<Spanned<String>>, Spanned<Self>)>),
+    Tuple(Vec<Spanned<Self>>),
+    Object(Vec<(Spanned<String>, Spanned<Self>)>),
     //Local(String),
     // Ident(Spanned<String>),
     QualifiedIdent(QualifiedType),
@@ -272,6 +272,7 @@ pub enum Expr {
     Member(Box<Spanned<Self>>, Spanned<String>),
     //If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
     //Print(Box<Spanned<Self>>),
+    Annotation(Box<Self>, Type),
 }
 
 #[derive(Debug)]

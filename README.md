@@ -9,8 +9,10 @@ Also, considering tools like co-pilot, it could signify the end of history for p
 ### Influences
 
 * Syntax: [python](https://www.python.org/)
+* General: [OCaml](https://ocaml.org/)
 * Syntax: [Lean4](https://leanprover.github.io/)
 * General: [nim](https://nim-lang.org/)
 * Trait system, unsafe: [rust](https://www.rust-lang.org/)
 * Memory model: [jakt](https://github.com/SerenityOS/jakt)
 * Implementation: [tao](https://github.com/zesterer/tao)
+* Type system: [MLscript](https://github.com/hkust-taco/mlscript)

@@ -82,6 +82,9 @@ def trait Add for T: type = {
     add: (T, T) -> T,
 }
 
+def double(a: T) -> T for T: Add =
+    return add(a, a)
+
 open Add^i32
 
 def add(a: i32, b: i32) -> i32 =
@@ -91,7 +94,7 @@ close Add^i32
 
 # type of i32 is now i32^Add, so it is a subtype of i32 and Add
 
-def Add^Vec[T].add(a: Vec[T], b: Vec[T]) -> T for T: Add =
+def Add^Vec[T].add(a: Vec[T], b: Vec[T]) -> Vec[T] for T: Add =
     let c = Vec.new()
     for i in zip(a, b):
         c.append(i+j)
