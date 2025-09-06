@@ -532,7 +532,34 @@ pub fn type_parser_rec(
 
     // we need to make these be spanned
     let enum_ = enum_parser(type_.clone()).map(|(e, span)| (Type::Enum(e), span));
-    let struct_ = struct_parser(type_.clone()).map(|(s, span)| (Type::Struct(s), span));
+    
+    // Convert struct syntax to field constraint intersections: {x: i32, y: i32} → {x: i32}^{y: i32}
+    let struct_ = struct_parser(type_.clone()).map(|(items, span)| {
+        if items.is_empty() {
+            // Empty struct - create empty intersection (could be enhanced)
+            // For now, we could use a unit type or special empty intersection
+            // Using Unknown as placeholder for empty intersection
+            (Type::Unknown, span)
+        } else if items.len() == 1 {
+            // Single field - create single FieldConstraint
+            let item = &items[0];
+            (Type::FieldConstraint(item.name.clone(), Box::new(item.ty.clone())), span)
+        } else {
+            // Multiple fields - create intersection of FieldConstraints: {x: T1}^{y: T2}^...
+            let field_constraints: Vec<Type> = items.into_iter()
+                .map(|item| Type::FieldConstraint(item.name, Box::new(item.ty)))
+                .collect();
+            
+            // Build intersection from right to left
+            let intersection = field_constraints.into_iter()
+                .reduce(|acc, field_constraint| {
+                    Type::Intersection(Box::new(field_constraint), Box::new(acc))
+                })
+                .unwrap();
+            
+            (intersection, span)
+        }
+    });
 
     /*
     let tuple =  type_.clone()

@@ -130,6 +130,7 @@ pub enum Type {
     Tuple(Vec<Spanned<Self>>),
     Enum(Vec<EnumVariant>),
     Struct(Vec<Item>),
+    FieldConstraint(String, Box<Spanned<Self>>),  // {field: Type} constraint
     Func(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Existential(String),               // unknown variable, to be decided!
     Quantification(String, Box<Self>), // generics!! does the type tree end in existentials with the same name?
@@ -154,6 +155,7 @@ impl Type {
             Type::Struct(items) => items
                 .into_iter()
                 .fold(true, |a, b| a && b.ty.0.is_monotype()),
+            Type::FieldConstraint(_, ty) => ty.0.is_monotype(),
             Type::Enum(variants) => variants.into_iter().fold(true, |a, b| {
                 a && b
                     .values
@@ -177,6 +179,7 @@ impl fmt::Display for Type {
             Type::Tuple(elements) => write!(f, "({:?})", elements),
             Type::Enum(variants) => write!(f, "{:?}", variants),
             Type::Struct(members) => write!(f, "{:?}", members),
+            Type::FieldConstraint(field, ty) => write!(f, "{{{}: {}}}", field, ty.0),
             Type::Func(rtn, args) => write!(f, "({}) -> {}", rtn.0, args.0),
             Type::Literal(literal) => write!(f, "{}", literal),
             Type::Existential(ex) => write!(f, "{}^", ex),

@@ -215,6 +215,7 @@ fn checks_against(state: &mut State, context: &Context, expr: &Expr, type_: &Typ
             gamma
         }
         (Expr::Object(items), Type::Struct(tys)) => {
+            // Legacy struct checking - will be removed once structs are fully converted to intersections
             assert!(items.len() == tys.len());
             let mut sorted_tys: Vec<_> = tys.iter().map(|a| a.clone()).collect();
             sorted_tys.sort_by(|a, b| a.name.cmp(&b.name));
@@ -227,6 +228,19 @@ fn checks_against(state: &mut State, context: &Context, expr: &Expr, type_: &Typ
                 gamma = checks_against(state, &gamma, &item.1 .0, &ty.ty.0);
             }
             gamma
+        }
+        (Expr::Object(items), Type::FieldConstraint(field_name, expected_type)) => {
+            // Check object literal against single field constraint
+            print_rule("FieldConstraintI");
+            // Object must have exactly one field matching the constraint
+            if items.len() != 1 {
+                panic!("Object literal must have exactly one field to match field constraint {{{}: {}}}", field_name, expected_type.0);
+            }
+            let (item_name, item_expr) = &items[0];
+            if item_name.0 != *field_name {
+                panic!("Object field '{}' does not match expected field '{}'", item_name.0, field_name);
+            }
+            checks_against(state, context, &item_expr.0, &expected_type.0)
         }
         //^I - Intersection type checking
         (_, Type::Intersection(a, b)) => {
@@ -272,6 +286,7 @@ fn occurs_in(alpha: &str, a: &Type) -> bool {
         Type::Struct(items) => items
             .iter()
             .fold(false, |a, b| a || occurs_in(alpha, &b.ty.0)),
+        Type::FieldConstraint(_, ty) => occurs_in(alpha, &ty.0),
         Type::Enum(variants) => variants.iter().fold(false, |a, b| {
             a || b.values.iter().fold(false, |_c, d| occurs_in(alpha, &d.0))
         }),
@@ -479,21 +494,6 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             }
             gamma
         }
-        // Struct to struct subtyping
-        (Type::Struct(items_a), Type::Struct(items_b)) => {
-            print_rule("<:Struct");
-            // Check structural subtyping: all fields in b must exist in a with compatible types
-            let mut gamma = context.clone();
-            for item_b in items_b {
-                // Find corresponding field in a
-                if let Some(item_a) = items_a.iter().find(|item_a| item_a.name == item_b.name) {
-                    gamma = subtype(state, &gamma, &item_a.ty.0, &item_b.ty.0);
-                } else {
-                    panic!("Field {} not found in left struct", item_b.name);
-                }
-            }
-            gamma
-        }
         //<:forallL
         (Type::Quantification(alpha, a), _) => {
             print_rule("<:∀L");
@@ -576,24 +576,20 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 panic!("Cannot subtype Str to {}", type_name);
             }
         }
-        // Struct to intersection type (nominal + structural)
-        (Type::Struct(items_a), Type::Ident(ident)) => {
-            print_rule("<:StructToNominal");
-            // Look up the nominal type in context to get its intersection type
-            if let Some(nominal_intersection) = context.get_annotation(&ident.path[0].0) {
-                // The annotation should be NominalType^StructType
-                // We need to check if our struct is a subtype of the structural part
-                match nominal_intersection {
-                    Type::Intersection(_, structural_part) => {
-                        // Check if our struct is a subtype of the structural part
-                        subtype(state, context, a, structural_part)
-                    }
-                    _ => {
-                        panic!("Expected intersection type for nominal type {}", ident.path[0].0);
-                    }
+        // Field constraint → nominal type subtyping
+        (Type::FieldConstraint(field_name, field_type), Type::Ident(ident)) => {
+            print_rule("<:FieldToNominal");
+            // Check if the field constraint is compatible with the nominal type
+            let type_name = &ident.path[0].0;
+            if let Some(nominal_intersection) = context.get_annotation(type_name) {
+                // Look for matching field in the nominal type's intersection
+                if field_constraint_matches_in_intersection(field_name, &field_type.0, nominal_intersection) {
+                    context.clone()
+                } else {
+                    panic!("Field {} not compatible with nominal type {}", field_name, type_name);
                 }
             } else {
-                panic!("Nominal type {} not found in context", ident.path[0].0);
+                panic!("Cannot subtype field constraint to undefined nominal type {}", type_name);
             }
         }
         _ => {
@@ -702,25 +698,38 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
         }
         Expr::Object(items) => {
             print_rule("Object");
-            // Synthesize object literal type by examining each field
+            // Synthesize object literal as field constraint intersection
             let mut gamma = context.clone();
-            let mut struct_items = Vec::new();
+            let mut field_constraints = Vec::new();
             
             for (field_name, field_expr) in items {
                 // Synthesize the type for each field expression
                 let (field_type, new_gamma) = synthesizes_to(state, &gamma, &field_expr.0);
                 
-                // Create an Item for the struct type
-                struct_items.push(Item {
-                    name: field_name.0.clone(),
-                    ty: (field_type, field_expr.1.clone()),
-                });
+                // Create a FieldConstraint for this field
+                field_constraints.push(Type::FieldConstraint(
+                    field_name.0.clone(),
+                    Box::new((field_type, field_expr.1.clone()))
+                ));
                 
                 gamma = new_gamma;
             }
             
-            // Return the struct type containing all the field types
-            (Type::Struct(struct_items), gamma)
+            // Create intersection of all field constraints: {field1: T1}^{field2: T2}^...
+            let result_type = if field_constraints.is_empty() {
+                // Empty object literal - for now use struct type
+                Type::Struct(vec![])
+            } else if field_constraints.len() == 1 {
+                // Single field
+                field_constraints.into_iter().next().unwrap()
+            } else {
+                // Multiple fields - create intersection
+                field_constraints.into_iter().reduce(|acc, field_constraint| {
+                    Type::Intersection(Box::new(acc), Box::new(field_constraint))
+                }).unwrap()
+            };
+            
+            (result_type, gamma)
         }
         Expr::Binary(left, op, right) => {
             print_rule("Binary");
@@ -763,44 +772,27 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
             let (expr_type, gamma) = synthesizes_to(state, context, &expr.0);
             let field_name = &field.0;
             
-            // Look up the field in the expression type
-            match &expr_type {
-                Type::Struct(items) => {
-                    // Direct struct access: find field by name
-                    for item in items {
-                        if item.name == *field_name {
-                            return (item.ty.0.clone(), gamma);
-                        }
-                    }
-                    panic!("Field {} not found in struct type", field_name);
-                }
-                Type::Intersection(a, b) => {
-                    // Try to find field in either part of intersection
-                    let field_type = find_field_in_type(a, field_name)
-                        .or_else(|| find_field_in_type(b, field_name));
-                    
-                    match field_type {
-                        Some(ty) => (ty, gamma),
-                        None => panic!("Field {} not found in intersection type", field_name),
-                    }
-                }
-                Type::Ident(ident) => {
-                    // Look up the type definition in context and check if it has the field
-                    if let Some(resolved_type) = context.get_annotation(&ident.path[0].0) {
-                        match resolved_type {
-                            Type::Intersection(_nom, struct_part) => {
-                                // For nominal^structural types, look in the structural part
-                                if let Some(field_type) = find_field_in_type(&**struct_part, field_name) {
-                                    return (field_type, gamma);
-                                }
+            // Search for field in intersection components
+            if let Some(field_type) = find_field_in_intersection(&expr_type, field_name) {
+                (field_type, gamma)
+            } else {
+                // For nominal types, look up their intersection representation
+                match &expr_type {
+                    Type::Ident(ident) => {
+                        // Look up the type definition in context to get its intersection
+                        if let Some(resolved_type) = context.get_annotation(&ident.path[0].0) {
+                            if let Some(field_type) = find_field_in_intersection(resolved_type, field_name) {
+                                (field_type, gamma)
+                            } else {
+                                panic!("Field {} not found in type {}", field_name, ident.path[0].0);
                             }
-                            _ => {}
+                        } else {
+                            panic!("Type {} not found in context", ident.path[0].0);
                         }
                     }
-                    panic!("Cannot access field {} on type {}", field_name, ident.path[0].0);
-                }
-                _ => {
-                    panic!("Cannot access field {} on non-struct type", field_name);
+                    _ => {
+                        panic!("Field {} not found in type {}", field_name, expr_type);
+                    }
                 }
             }
         }
@@ -809,20 +801,52 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
     }
 }
 
-/// Helper function to find a field in a type (for member access)
-fn find_field_in_type(ty: &Type, field_name: &str) -> Option<Type> {
+/// Helper function to check if a field constraint matches within an intersection type
+fn field_constraint_matches_in_intersection(field_name: &str, field_type: &Type, intersection_type: &Type) -> bool {
+    match intersection_type {
+        Type::FieldConstraint(name, constraint_type) if name == field_name => {
+            // Found matching field - check if types are compatible
+            // For now, do simple equality check (could be enhanced with subtyping)
+            match (&field_type, &constraint_type.0) {
+                (Type::Literal(a), Type::Literal(b)) => a == b,
+                (Type::Ident(a), Type::Ident(b)) => a.path[0].0 == b.path[0].0,
+                (Type::Literal(LiteralType::Str), Type::Ident(ident)) if ident.path[0].0 == "String" => true,
+                (Type::Literal(LiteralType::Nat), Type::Ident(ident)) if matches!(ident.path[0].0.as_str(), "i32" | "u32" | "i64" | "u64") => true,
+                _ => false
+            }
+        }
+        Type::Intersection(a, b) => {
+            // Search both sides of intersection
+            field_constraint_matches_in_intersection(field_name, field_type, a) ||
+            field_constraint_matches_in_intersection(field_name, field_type, b)
+        }
+        _ => false
+    }
+}
+
+/// Helper function to find a field in an intersection type (for member access)
+fn find_field_in_intersection(ty: &Type, field_name: &str) -> Option<Type> {
     match ty {
+        Type::FieldConstraint(name, field_type) if name == field_name => Some(field_type.0.clone()),
+        Type::Intersection(a, b) => {
+            find_field_in_intersection(a, field_name)
+                .or_else(|| find_field_in_intersection(b, field_name))
+        }
+        Type::Ident(ident) => {
+            // Look up nominal type and search its intersection
+            // A nominal type A is always stored as A^{...fields...}
+            // For now, return None - this will be handled when we implement 
+            // automatic nominal→intersection conversion
+            None
+        }
         Type::Struct(items) => {
+            // Temporary: still handle legacy struct access during transition
             for item in items {
                 if item.name == field_name {
                     return Some(item.ty.0.clone());
                 }
             }
             None
-        }
-        Type::Intersection(a, b) => {
-            find_field_in_type(a, field_name)
-                .or_else(|| find_field_in_type(b, field_name))
         }
         _ => None,
     }
@@ -914,6 +938,10 @@ fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
                     ty: (substitution(&a.ty.0, alpha, b), a.ty.1.clone()),
                 })
                 .collect(),
+        ),
+        Type::FieldConstraint(field, ty) => Type::FieldConstraint(
+            field.clone(),
+            Box::new((substitution(&ty.0, alpha, b), ty.1.clone()))
         ),
         Type::Enum(items) => Type::Enum(
             items
@@ -1045,6 +1073,7 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
         Type::Struct(items) => items
             .iter()
             .fold(true, |first, a| first && is_well_formed(context, &a.ty.0)),
+        Type::FieldConstraint(_, ty) => is_well_formed(context, &ty.0),
         Type::Quantification(alpha, a) => {
             is_well_formed(&context.add(ContextElement::Variable(alpha.clone())), a)
         }
@@ -1105,6 +1134,10 @@ fn apply_context(a: Type, context: &Context) -> Type {
                 })
                 .collect(),
         ),
+        Type::FieldConstraint(field, ty) => Type::FieldConstraint(
+            field,
+            Box::new((apply_context(ty.0, context), ty.1))
+        ),
         Type::Enum(variants) => Type::Enum(
             variants
                 .into_iter()
@@ -1140,17 +1173,22 @@ pub fn check_program(program: &Program) -> Result<(), String> {
                     type_args: vec![],
                 });
                 
-                // For structural types (like structs), create intersection
+                // Create intersection type for ALL nominal type definitions: TypeName^StructuralConstraints
                 let intersection_type = match structural_type {
-                    Type::Struct(_) | Type::Enum(_) => {
+                    Type::Struct(_) | Type::Enum(_) | Type::FieldConstraint(_, _) | Type::Intersection(_, _) => {
+                        // Structural types become: TypeName^StructuralType
                         Type::Intersection(
                             Box::new(nominal_type.clone()),
                             Box::new(structural_type.clone())
                         )
                     }
                     _ => {
-                        // For non-structural types, just use the nominal type
-                        nominal_type
+                        // Even for simple types, create intersection for consistency: TypeName^SimpleType
+                        // This ensures all nominal types follow the same pattern
+                        Type::Intersection(
+                            Box::new(nominal_type.clone()),
+                            Box::new(structural_type.clone())
+                        )
                     }
                 };
                 
@@ -1468,11 +1506,11 @@ def getBadField(p: Person) -> String = p.nonexistent
         let struct_type = Type::Struct(items);
         
         // Should find existing field
-        assert!(find_field_in_type(&struct_type, "name").is_some());
-        assert!(find_field_in_type(&struct_type, "age").is_some());
+        assert!(find_field_in_intersection(&struct_type, "name").is_some());
+        assert!(find_field_in_intersection(&struct_type, "age").is_some());
         
         // Should not find non-existent field
-        assert!(find_field_in_type(&struct_type, "nonexistent").is_none());
+        assert!(find_field_in_intersection(&struct_type, "nonexistent").is_none());
     }
 
     #[test]
@@ -1502,8 +1540,8 @@ def getBadField(p: Person) -> String = p.nonexistent
         );
         
         // Should find field in intersection type
-        assert!(find_field_in_type(&intersection_type, "name").is_some());
-        assert!(find_field_in_type(&intersection_type, "nonexistent").is_none());
+        assert!(find_field_in_intersection(&intersection_type, "name").is_some());
+        assert!(find_field_in_intersection(&intersection_type, "nonexistent").is_none());
     }
 
     #[test]

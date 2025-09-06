@@ -101,57 +101,70 @@ Uses the `ariadne` crate for rich error reporting with:
 ### Current Working Features ✅
 - **Bidirectional type checking** with synthesis and checking modes
 - **Basic types**: literals (Nat, Bool, Str), built-in types (i32, f64, bool, String, etc.)
-- **Binary operations**: arithmetic (+, -, *, /) and comparisons (==, <, >, etc.)
+- **Binary operations**: arithmetic (+, -, *, /) and comparisons (==, <, >, etc.) with proper type synthesis
 - **Variable resolution**: function parameters and local variables
 - **Intersection types**: `A^B` with proper subtyping rules (`A^B <: A` and `A^B <: B`)
 - **Structural typing with nominal anchoring**: `Person^{name: String, age: i32}`
 - **Generic functions**: basic support for `def func(x: T) -> T for T: type`
 - **Function type checking**: parameters are properly added to context
-- **Subtyping**: Nat literals can subtype to integer types
+- **Subtyping**: Nat literals can subtype to integer types (i32, u32, i64, etc.)
+- **Member access**: Full field lookup for structs, intersection types, and nominal types (`person.name`, `obj.field`)
+- **Object literals**: Complete synthesis of structural types from `{name: "Alice", age: 30}` expressions
+- **Function calls**: Comprehensive support for nullary `func()`, single-argument `func(x)`, and multi-argument `func(a, b)` calls using tuple-based approach
+- **Comprehensive testing**: 20+ test cases covering all implemented features with proper error handling
 
 ### Key Entry Points for Type Checker Work
 
 If you want to work on the type checker, start here:
 
-1. **Main entry point**: `check_program()` in `src/checker.rs:925`
-   - This is called from `main.rs:114` and processes entire programs
+1. **Main entry point**: `check_program()` in `src/checker.rs:1125`
+   - This is called from `main.rs` and processes entire programs
    - Two-pass approach: collect definitions, then check function bodies
 
 2. **Core bidirectional functions**:
-   - `synthesizes_to()` at `src/checker.rs:529` - infers types from expressions
-   - `checks_against()` at `src/checker.rs:176` - checks expressions against expected types
+   - `synthesizes_to()` at `src/checker.rs:606` - infers types from expressions
+   - `checks_against()` at `src/checker.rs:178` - checks expressions against expected types
    - `subtype()` at `src/checker.rs:427` - establishes subtyping relationships
 
-3. **Context management**: `Context` struct at `src/checker.rs:48`
+3. **Context management**: `Context` struct at `src/checker.rs:31`
    - Ordered context with existentials, type variables, and solved types
    - Critical for constraint-based type inference
 
 ### Priority Areas for Development
 
-1. **Member Access** (`Expr::Member` at `src/checker.rs:698`)
-   - Currently returns `Type::Unknown`
-   - Essential for structural typing: `person.name`, `obj.field`
-   - Should look up field types from struct/object types
+The type checker now has comprehensive support for core language features. The remaining development areas focus on advanced language constructs:
 
-2. **Object Literals** (`Expr::Object` at `src/checker.rs:656`)
-   - Currently returns `Type::Unknown` 
-   - Need to synthesize structural types: `{name: "Alice", age: 30}`
-   - Should create proper `Type::Struct` with inferred field types
+1. **Let Expressions** (`TODO` at `src/checker.rs:665`)
+   - AST support exists but type checker implementation needed
+   - Local variable binding with type inference: `let x = expr in body`
+   - Requires context management for locally scoped variables
 
-3. **Function Calls** (`Expr::Call` at `src/checker.rs:613`)
-   - Basic implementation exists but limited
-   - Need better multi-argument support and type application
-   - Generic function instantiation needs work
+2. **Control Flow Expressions**
+   - If/else expressions with type checking for both branches
+   - Match expressions with exhaustiveness checking for sum types
+   - Loop expressions (for, while) with proper type analysis
 
-4. **Trait System** (Open/Close blocks)
+3. **Trait System Implementation** (Open/Close blocks)
    - Currently skipped in `check_program()` (see "Skipping definition type" output)
-   - Need to implement trait constraint checking
-   - Handle retroactive trait implementation for intersection types
+   - Retroactive trait implementation for intersection types
+   - Trait constraint checking and resolution
+   - Method dispatch through trait bounds
 
-5. **Pattern Matching and Control Flow**
-   - Match expressions, if/else, loops
-   - Exhaustiveness checking for sum types
-   - Type checking for complex control structures
+4. **Named Function Arguments** (`TODO` at `src/checker.rs:840`)
+   - Function calls with named parameters: `func(x: value, y: other)`
+   - Parameter name validation and reordering
+   - Integration with current tuple-based multi-argument system
+
+5. **Advanced Generic Constraints**
+   - Beyond basic `for T: type` constraints
+   - Trait bounds: `for T: Trait` constraint checking
+   - Higher-kinded types and complex generic relationships
+   - Generic function instantiation with constraint solving
+
+6. **Pattern Matching and Destructuring**
+   - Tuple destructuring: `let (a, b) = tuple`
+   - Struct destructuring: `let {name, age} = person`
+   - Enum pattern matching with exhaustiveness checking
 
 ### Implementation Architecture
 
@@ -200,15 +213,43 @@ This shows:
 
 ### Testing the Type Checker
 
-```bash
-# Test basic functionality
-cargo run test_simple.alg    # Basic constant: def x: i32 = 42
-cargo run test_binary.alg    # Binary ops: def result: i32 = 2 + 3  
-cargo run test_struct.alg    # Struct types: def type Person = { name: String }
+The type checker includes comprehensive test coverage. Run tests with:
 
-# Test complex examples
-cargo run examples/syntax.alg        # Full syntax (some features not yet supported)
-cargo run examples/syntax_complete.alg  # Comprehensive examples showcasing end-lang features
+```bash
+cargo test           # Run all built-in tests
+cargo run examples/syntax.alg         # Full language examples
+cargo run examples/syntax_complete.alg # Comprehensive feature showcase
+```
+
+**Implemented Test Cases Cover:**
+- ✅ **Basic constants**: `def answer: i32 = 42`
+- ✅ **Binary operations**: `def result: i32 = 2 + 3`, `def isEqual: bool = 5 == 3`
+- ✅ **Struct definitions**: `def type Person = { name: String, age: i32 }`
+- ✅ **Member access**: `def getName(p: Person) -> String = p.name`
+- ✅ **Object literals**: `def person: PersonType = { name = "Alice", age = 30 }`
+- ✅ **Function calls**: `def result: i32 = add(5, 3)` (multi-argument support)
+- ✅ **Generic functions**: `def times(a: T, b: T) -> T for T: type = a * b`
+- ✅ **Intersection types**: Nominal types get proper `Person^{fields}` intersection types
+- ✅ **Subtyping**: Nat literals subtype to integer types (`42` → `i32`)
+- ✅ **Error handling**: Proper failures for missing fields, type mismatches
+
+**Example Working Programs:**
+```rust
+// Multi-parameter functions with tuple arguments
+def add(x: i32, y: i32) -> i32 = x + y
+def result: i32 = add(5, 3)
+
+// Object literals with computed expressions  
+def computedObject: ComputedType = {
+    sum = 5 + 3,
+    comparison = 10 > 5,
+    value = 42,
+}
+
+// Member access on intersection types
+def type Address = { street: String, city: String }
+def type Person = { name: String, address: Address }
+def getCity(p: Person) -> String = p.address.city
 ```
 
 ### Related Academic Work
@@ -225,4 +266,4 @@ cargo run examples/syntax_complete.alg  # Comprehensive examples showcasing end-
 - `ariadne` - Error reporting and diagnostics  
 - `internment` - String interning (partially used)
 
-The type checker is now functionally working for basic programs with intersection types and structural/nominal typing - a significant milestone for end-lang's unique type system.
+The type checker now provides **comprehensive support for end-lang's core type system**, including intersection types, structural/nominal typing, member access, object literal synthesis, and multi-argument function calls. This represents a major milestone - the type checker successfully handles complex structural typing scenarios with proper bidirectional inference and constraint solving. The implementation is ready for advanced language features like traits, control flow, and pattern matching.
