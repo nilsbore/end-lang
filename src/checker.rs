@@ -531,6 +531,21 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             }
         }
         //<:^ - Intersection subtyping
+        // Field constraint intersection → nominal type subtyping (stricter checking)
+        (Type::Intersection(a, b), Type::Ident(ident)) if is_field_constraint_intersection(a, b) => {
+            print_rule("<:FieldIntersectionToNominal");
+            // For field constraint intersections, ALL fields must be compatible with nominal type
+            let type_name = &ident.path[0].0;
+            if let Some(nominal_intersection) = context.get_annotation(type_name) {
+                if all_field_constraints_match_nominal(a, b, nominal_intersection) {
+                    context.clone()
+                } else {
+                    panic!("Not all field constraints match nominal type {}", type_name);
+                }
+            } else {
+                panic!("Cannot subtype field intersection to undefined nominal type {}", type_name);
+            }
+        }
         (Type::Intersection(a, b), c) => {
             print_rule("<:^");
             // A^B <: C if A <: C OR B <: C (try both)
@@ -582,11 +597,18 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             // Check if the field constraint is compatible with the nominal type
             let type_name = &ident.path[0].0;
             if let Some(nominal_intersection) = context.get_annotation(type_name) {
-                // Look for matching field in the nominal type's intersection
-                if field_constraint_matches_in_intersection(field_name, &field_type.0, nominal_intersection) {
-                    context.clone()
+                // For single field constraint, verify it matches AND that nominal type has only one field
+                let nominal_field_count = count_fields_in_intersection(nominal_intersection);
+                if nominal_field_count == 1 {
+                    // Single field case - check if it matches
+                    if field_constraint_matches_in_intersection(field_name, &field_type.0, nominal_intersection) {
+                        context.clone()
+                    } else {
+                        panic!("Field {} not compatible with nominal type {}", field_name, type_name);
+                    }
                 } else {
-                    panic!("Field {} not compatible with nominal type {}", field_name, type_name);
+                    // Multi-field nominal type but single field constraint - incomplete
+                    panic!("Single field constraint cannot satisfy multi-field nominal type {}", type_name);
                 }
             } else {
                 panic!("Cannot subtype field constraint to undefined nominal type {}", type_name);
@@ -798,6 +820,43 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
         }
         // Add support for synthesizing intersection types from structural literals
         // This will be needed when we have object literals that should get nominal+structural types
+    }
+}
+
+/// Helper function to check if an intersection consists of field constraints
+fn is_field_constraint_intersection(a: &Type, b: &Type) -> bool {
+    fn is_field_constraint_or_intersection(t: &Type) -> bool {
+        match t {
+            Type::FieldConstraint(_, _) => true,
+            Type::Intersection(x, y) => is_field_constraint_or_intersection(x) && is_field_constraint_or_intersection(y),
+            _ => false
+        }
+    }
+    is_field_constraint_or_intersection(a) && is_field_constraint_or_intersection(b)
+}
+
+/// Helper function to check if all field constraints in an intersection match a nominal type
+fn all_field_constraints_match_nominal(a: &Type, b: &Type, nominal_type: &Type) -> bool {
+    fn check_all_field_constraints(field_intersection: &Type, nominal_type: &Type) -> bool {
+        match field_intersection {
+            Type::FieldConstraint(field_name, field_type) => {
+                field_constraint_matches_in_intersection(field_name, &field_type.0, nominal_type)
+            }
+            Type::Intersection(x, y) => {
+                check_all_field_constraints(x, nominal_type) && check_all_field_constraints(y, nominal_type)
+            }
+            _ => false
+        }
+    }
+    check_all_field_constraints(a, nominal_type) && check_all_field_constraints(b, nominal_type)
+}
+
+/// Helper function to count the number of fields in an intersection type
+fn count_fields_in_intersection(intersection_type: &Type) -> usize {
+    match intersection_type {
+        Type::FieldConstraint(_, _) => 1,
+        Type::Intersection(a, b) => count_fields_in_intersection(a) + count_fields_in_intersection(b),
+        _ => 0
     }
 }
 
@@ -1607,6 +1666,247 @@ def result: i32 = add(5, 3)
 def getAnswer() -> i32 = 42
 
 def result: i32 = getAnswer()
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    // ==================== WEEK 2 INTERSECTION TYPE TESTS ====================
+    
+    #[test]
+    fn test_field_intersection_parsing() {
+        // Test that struct syntax {x: T1, y: T2} parses to field intersections {x: T1}^{y: T2}
+        let source = r#"
+def type Point = {
+    x: i32,
+    y: i32,
+}
+
+def origin: Point = {
+    x = 0,
+    y = 0,
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_single_field_intersection() {
+        // Test that single field struct becomes single FieldConstraint
+        let source = r#"
+def type Name = {
+    value: String,
+}
+
+def myName: Name = {
+    value = "Alice",
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_complex_field_intersection() {
+        // Test multi-field struct with different types
+        let source = r#"
+def type ComplexType = {
+    name: String,
+    count: i32,
+    active: bool,
+}
+
+def instance: ComplexType = {
+    name = "test",
+    count = 42,
+    active = true,
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_automatic_nominal_intersection_creation() {
+        // Test that def type Person = {...} creates Person^{...fields...}
+        let source = r#"
+def type Student = {
+    name: String,
+    grade: i32,
+}
+
+def type Teacher = {
+    name: String,
+    subject: String,
+}
+
+def processStudent(s: Student) -> String = s.name
+def processTeacher(t: Teacher) -> String = t.name
+"#;
+        // Both should work - each nominal type should have automatic intersection
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_field_constraint_to_nominal_subtyping() {
+        // Test that field constraint intersections subtype to compatible nominal types
+        let source = r#"
+def type Person = {
+    name: String,
+    age: i32,
+}
+
+def alice: Person = {
+    name = "Alice",
+    age = 30,
+}
+
+def bob: Person = {
+    name = "Bob", 
+    age = 25,
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_object_literal_with_nominal_types() {
+        // Test comprehensive object literal → nominal type checking
+        let source = r#"
+def type Address = {
+    street: String,
+    city: String,
+}
+
+def type PersonWithAddress = {
+    name: String,
+    age: i32,
+    address: Address,
+}
+
+def home: Address = {
+    street = "123 Main St",
+    city = "Anytown",
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nat_to_integer_in_intersections() {
+        // Test that Nat literals work in field intersections with integer fields
+        let source = r#"
+def type Config = {
+    port: i32,
+    timeout: u32,
+    retries: i64,
+}
+
+def defaultConfig: Config = {
+    port = 8080,
+    timeout = 5000,
+    retries = 3,
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_member_access_on_intersection_types() {
+        // Test that member access works on intersection types
+        let source = r#"
+def type Vehicle = {
+    brand: String,
+    year: i32,
+}
+
+def getBrand(v: Vehicle) -> String = v.brand
+def getYear(v: Vehicle) -> i32 = v.year
+
+def myCar: Vehicle = {
+    brand = "Toyota",
+    year = 2022,
+}
+
+def carBrand: String = getBrand(myCar)
+def carYear: i32 = getYear(myCar)
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_intersection_type_field_mismatch() {
+        // Test that mismatched fields are caught
+        let source = r#"
+def type Person = {
+    name: String,
+    age: i32,
+}
+
+def badPerson: Person = {
+    name = "Alice",
+    wrongField = 30,
+}
+"#;
+        // This should fail - wrongField doesn't match age field
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_field_in_object_literal() {
+        // Test that missing required fields are caught
+        let source = r#"
+def type Complete = {
+    field1: String,
+    field2: i32,
+}
+
+def incomplete: Complete = {
+    field1 = "value",
+    # missing field2
+}
+"#;
+        // This should fail - missing field2
+        let result = parse_and_check(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_literal_to_string_type() {
+        // Test that string literals work with String type in intersections
+        let source = r#"
+def type Message = {
+    content: String,
+    priority: i32,
+}
+
+def urgent: Message = {
+    content = "System alert!",
+    priority = 1,
+}
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nested_field_intersections() {
+        // Test that nested types work with field intersections
+        let source = r#"
+def type Inner = {
+    value: i32,
+}
+
+def type Outer = {
+    inner: Inner,
+    label: String,
+}
+
+def createInner: Inner = {
+    value = 42,
+}
+
+def createOuter: Outer = {
+    inner = createInner,
+    label = "test",
+}
 "#;
         assert!(parse_and_check(source).is_ok());
     }
