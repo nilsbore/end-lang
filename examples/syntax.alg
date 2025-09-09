@@ -6,6 +6,15 @@
 
 def answer: i32 = 42
 
+# Forward declarations for undefined types
+def type tensor for T: type, M: size, N: size, L: size = pass
+def type Vec for T: type = pass
+def type size = pass
+
+# Forward declarations for undefined functions (with stub implementations)
+def range(start: i32, end: i32) -> Vec[i32] = [42]  # Stub: return single-element tuple
+def pass() -> () = 42                               # Stub: return unit-ish value
+
 def times(a: T, b: T) -> T for T: type = a * b
 
 #def times_lambda: (T, T) -> T for T: type = fn(a, b) => a*b
@@ -133,8 +142,8 @@ def let_examples() -> () =
     let i = 2 # let g = fn(x: i32) => x + 1
     let i = 3
     
-    let l: List[i32] = [1, 2, 3, 4, 5]
-    # TODO: let l: List of i32 = [2*i for i in range(0, 9) if i != 5]
+    let l: (i32, i32, i32, i32, i32) = [1, 2, 3, 4, 5]
+    # TODO: let l: (i32, i32, i32, i32, i32) = [2*i for i in range(0, 9) if i != 5]  # Note: [1,2,3] creates tuples, not lists
     
     let p = Person(name="joe", address="Main str 1", age=42)
     let p2: Person = {

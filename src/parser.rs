@@ -588,8 +588,15 @@ pub fn type_parser_rec(
     // ^ needs to have highest priority
     // -> 2nd highest
 
+    // Forward declaration support: "pass" creates Type::Unknown
+    let pass_type = filter_map(|span, tok| match tok {
+        Token::Ident(ident) if ident == "pass" => Ok((Type::Unknown, span)),
+        _ => Err(Simple::expected_input_found(span, Vec::new(), Some(tok))),
+    });
+
     let simple_type = universe_type
         .or(literal_type)
+        .or(pass_type)
         .or(qualified_type)
         .or(tuple)
         .or(enum_)
