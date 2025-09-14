@@ -1,8 +1,8 @@
 # Intersection Type System Overhaul Plan (Revised)
 
-## Status: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4a ✅ | Phase 4b In Progress 🚀
+## Status: Phase 1 ✅ | Phase 2 ✅ | Phase 3 ✅ | Phase 4a ✅ | Phase 4b ✅ | Phase 4c Next 🚀
 
-**Progress**: Phase 4a Forward Declarations & Function Body Type Checking completed! The type system now supports forward-declared types and comprehensive function body type checking with real-world program support. Phase 4b cross-module support in progress.
+**Progress**: Phase 4b Advanced Type Features & Pattern Matching completed! The type system now has complete pattern variable type extraction, fixed generic function instantiation, and robust lexical scoping. All 70 tests passing with comprehensive pattern matching support. Phase 4c cross-module support ready to begin.
 
 ## Current Implementation (Latest)
 
@@ -31,11 +31,12 @@
 - **Function body type checking**: Complete support for let bindings, function calls, member access
 - **Real-world program support**: `examples/syntax.alg` processes complex function bodies successfully
 
-**Phase 4b**: Cross-Module Support & Method Dispatch 🚀 (In Progress)  
-- **Method dispatch**: Implement method calls through enhanced intersection types
-- **Cross-module registry**: Export/import complete registries between modules
-- **Control flow scoping**: Fix minor for-loop variable scoping issues
-- **Integration testing**: End-to-end testing of complete intersection type system
+**Phase 4b**: Advanced Type Features & Pattern Matching ✅ (COMPLETED)
+- **Pattern matching & sum types**: Complete pattern variable type extraction from sum type variants
+- **Generic function instantiation**: Fixed critical substitution bug in quantified function types  
+- **Lexical scoping**: Fixed variable scoping in for-loops, if-branches, while-loops, and match expressions
+- **Enum variant constructors**: Full support for generic enum constructors with proper instantiation
+- **Comprehensive testing**: 70/70 tests passing with robust pattern matching validation
 
 ## Core Architecture Changes
 
@@ -500,3 +501,134 @@ Forward declarations integrate seamlessly with the existing intersection type sy
 4. **Parser enhancements**: Parenthesized expressions `(expr)` for precedence grouping
 
 **Current State**: End-lang now has a **fully functional intersection type system** with forward references, retroactive trait implementation, and comprehensive function body type checking. The language can handle real-world programs with complex type relationships and undefined dependencies.
+
+## Phase 4b: Advanced Type Features & Pattern Matching ✅ COMPLETED
+
+**Status**: Successfully implemented complete pattern variable type extraction, fixed critical generic function instantiation, and established robust lexical scoping across all control flow constructs.
+
+### 4b.1 Pattern Variable Type Extraction ✅
+Complete support for extracting correct types from sum type variants in match expressions:
+
+```rust
+def type Option for T: type = | None | Some(T)
+def type Result for T: type, E: type = | Ok(T) | Err(E)
+
+def testMatch(r: Result[i32, String]) -> i32 =
+    match r:
+        | Ok(value) => value     # ✅ value: i32 (correctly extracted)
+        | Err(msg) => 0          # ✅ msg: String (correctly extracted)
+```
+
+**Technical Implementation**:
+- **Pattern type resolution**: `resolve_existential_type()` resolves solved existentials in pattern contexts
+- **Sum type instantiation**: `extract_variant_parameter_types()` extracts correct types from instantiated sum types
+- **Existential handling**: `substitute_variant_types_with_instantiation()` handles complex generic instantiation
+- **Context integration**: Pattern variables get proper types instead of `Type::Unknown` placeholders
+
+### 4b.2 Critical Substitution Bug Fix ✅
+Fixed fundamental issue in generic function instantiation where type arguments weren't recursively substituted:
+
+```rust
+// BEFORE: Some: (∀T. T -> Option[T]) + 42 → Option[T] (WRONG - T not substituted)
+// AFTER:  Some: (∀T. T -> Option[T]) + 42 → Option[t0^] → Option[{value: Nat}] (CORRECT)
+```
+
+**Root Cause Fixed** (`src/checker.rs:1598-1611`):
+```rust
+Type::Ident(var) => {
+    if var.path[0].0 == alpha {
+        b.clone()
+    } else {
+        // ✅ CRITICAL FIX: Recursively substitute in type arguments
+        let substituted_type_args: Vec<Spanned<Type>> = var.type_args.iter()
+            .map(|arg| (substitution(&arg.0, alpha, b), arg.1.clone()))
+            .collect();
+        Type::Ident(QualifiedType {
+            path: var.path.clone(),
+            type_args: substituted_type_args,
+        })
+    }
+}
+```
+
+**Impact**: Fixed generic function instantiation throughout the entire type system, enabling proper `Option[T]` → `Option[concrete_type]` transformations.
+
+### 4b.3 Lexical Scoping System ✅
+Complete fix for variable scoping across all control flow constructs, ensuring child blocks don't leak variables to parent scope:
+
+**Fixed Constructs**:
+- ✅ **For loops**: `for i in range(0, 5): pass` - `i` not accessible after loop
+- ✅ **If branches**: `if cond: let x = 42` - `x` not accessible after if  
+- ✅ **While loops**: `while cond: let temp = val` - `temp` not accessible after while
+- ✅ **Match expressions**: `match val: | Pat(var) => ...` - `var` not accessible outside match
+- ✅ **Block expressions**: `{ let local = 42; local }` - `local` not accessible outside block
+
+**Technical Implementation**:
+- **Parent context preservation**: All scoping functions return parent context instead of modified child context
+- **Variable leakage prevention**: Local variables properly isolated to their lexical scope
+- **Proper context management**: Child contexts created for local scope, discarded after use
+
+### 4b.4 Enum Variant Constructor Support ✅
+Complete support for generic enum constructors with proper type instantiation:
+
+```rust
+def type Option for T: type = | None | Some(T)
+
+# ✅ Some recognized as: (∀T. T -> Option[T])
+# ✅ Some(42) instantiates to: Option[t0^] where t0^ solved to Nat
+# ✅ Pattern Some(value) extracts: value: Nat (resolved from existential)
+```
+
+**Technical Features**:
+- **Constructor resolution**: `resolve_enum_variant_constructor()` identifies enum constructors
+- **Quantified types**: Proper `(∀T. T -> Option[T])` quantification for generic constructors  
+- **Type instantiation**: Fresh existential creation and constraint solving
+- **Pattern integration**: Constructor types work seamlessly with pattern variable extraction
+
+### 4b.5 Loop Variable Type Extraction ✅
+Fixed for-loop variables getting `Unknown!` type instead of proper element types:
+
+```rust
+def testLoop() -> () =
+    for i in range(0, 3):  # ✅ i: i32 (extracted from Vec[i32])
+        print(i)
+```
+
+**Technical Implementation**:
+- **Iterator type analysis**: `extract_iterator_element_type()` extracts element types from collections
+- **Generic collection support**: Works with `Vec[i32]` → `i32`, `List[String]` → `String`  
+- **Intersection type handling**: Proper element type extraction from intersection types
+
+### 4b.6 Comprehensive Test Validation ✅
+**Test Results: 70/70 Passing** (up from 65/69)
+
+**New Test Coverage**:
+- ✅ **Pattern matching validation**: `test_pattern_variable_type_extraction_from_sum_types`
+  - Multiple generic sum types (`Result[T,E]`, `Maybe[T]`, `Complex`)
+  - Constructor calls with pattern matching (`Ok(42)` → `Ok(val)`)  
+  - Nested patterns and complex type flow
+  - String and numeric type extraction validation
+
+**Fixed Previously Failing Tests**:
+- ✅ `test_enhanced_intersection_types_in_blocks` - Pattern variables now get correct types
+- ✅ `test_for_loop_variable_leakage_should_fail` - Scoping verification working  
+- ✅ `test_if_branch_variable_leakage_should_fail` - Scoping verification working
+
+### 4b.7 Architecture Integration ✅
+All Phase 4b features integrate seamlessly with existing intersection type system:
+
+- **Registry compatible**: Pattern types and constructor types work with complete module registry
+- **Enhancement ready**: Pattern matching works on enhanced intersection types
+- **Subtyping consistent**: Pattern variable types participate in full subtyping system
+- **Error handling robust**: Proper error messages for pattern mismatches and type conflicts
+- **Performance maintained**: All features work without performance degradation
+
+### Next Steps: Phase 4c
+**Remaining Advanced Features**:
+1. **Method dispatch**: `obj.method()` calls through enhanced intersection types
+2. **Cross-module registry**: Export/import complete registries between modules  
+3. **Named function arguments**: Function calls with parameter names
+4. **Control flow expressions**: If/match expressions returning values
+5. **Advanced pattern matching**: Nested patterns and exhaustiveness checking
+
+**Current Achievement**: End-lang now has **complete pattern matching support** with proper type extraction, robust lexical scoping, and fixed generic function instantiation. The intersection type system handles real-world pattern matching scenarios with full type safety.

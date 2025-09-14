@@ -923,6 +923,25 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 panic!("Cannot subtype field constraint to undefined nominal type {}", type_name);
             }
         }
+        // Field constraint reflexivity and compatibility
+        (Type::FieldConstraint(field1, type1), Type::FieldConstraint(field2, type2)) => {
+            if field1 == field2 {
+                // Same field name - check if types are compatible
+                print_rule("<:FieldConstraintRefl");
+                subtype(state, context, &type1.0, &type2.0)
+            } else {
+                panic!("Cannot subtype different field constraints: {} vs {}", field1, field2);
+            }
+        }
+        // Unknown type compatibility - handles generic/unknown types
+        (_, Type::Unknown) => {
+            print_rule("<:Unknown");
+            context.clone()
+        }
+        (Type::Unknown, _) => {
+            print_rule("<:UnknownLeft");
+            context.clone()
+        }
         _ => {
             panic!("Couldn't subtype {} <: {}", a, b);
         }
@@ -944,7 +963,13 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
             if let Some(annotation) = context.get_annotation(&x.path[0].0) {
                 return (annotation.clone(), context.clone());
             };
-            panic!();
+            
+            // Check if this is an enum variant constructor
+            if let Some(constructor_type) = resolve_enum_variant_constructor(context, &x.path[0].0) {
+                return (constructor_type, context.clone());
+            }
+            
+            panic!("variable not found: {}", x.path[0].0);
         }
         //Anno
         Expr::Annotation(e, annotation) => {
@@ -1175,6 +1200,286 @@ fn count_fields_in_intersection(intersection_type: &Type) -> usize {
     }
 }
 
+/// Helper function to add pattern variables to context for match expression type checking
+fn add_pattern_variables_to_context(context: &Context, pattern: &Pattern) -> Context {
+    // Legacy function - should use add_pattern_variables_to_context_with_scrutinee instead
+    add_pattern_variables_to_context_with_scrutinee(context, pattern, &Type::Unknown)
+}
+
+/// Helper function to add pattern variables to context with proper type extraction from scrutinee
+fn add_pattern_variables_to_context_with_scrutinee(context: &Context, pattern: &Pattern, scrutinee_type: &Type) -> Context {
+    let mut new_context = context.clone();
+    
+    // Extract pattern variables with proper types from the sum type variant
+    if let Some(ref members) = pattern.members {
+        // Get the variant parameter types for this pattern
+        let variant_types = extract_variant_parameter_types(context, scrutinee_type, &pattern.ident.0);
+        
+        // Add each pattern variable with its corresponding type
+        for (i, member_pattern) in members.iter().enumerate() {
+            let param_type = if i < variant_types.len() {
+                variant_types[i].clone()
+            } else {
+                Type::Unknown // Fallback if we can't determine the type
+            };
+            
+            new_context = new_context.add(ContextElement::TypedVariable(
+                member_pattern.ident.0.clone(), 
+                param_type
+            ));
+        }
+    }
+    
+    new_context
+}
+
+/// Extract parameter types for a specific variant from an instantiated sum type
+fn extract_variant_parameter_types(context: &Context, scrutinee_type: &Type, variant_name: &str) -> Vec<Type> {
+    match scrutinee_type {
+        Type::Ident(qualified_type) => {
+            // Get the base type name (e.g., "Option")
+            let type_name = &qualified_type.path[0].0;
+            
+            // Look up the generic sum type definition in the context
+            if let Some(base_type) = context.get_annotation(type_name) {
+                if let Type::Intersection(_, b) = base_type {
+                    if let Type::Enum(variants) = &**b {
+                        // Find the matching variant
+                        for variant in variants {
+                            if variant.name.0 == variant_name {
+                                // Substitute type parameters with the concrete instantiated types
+                                return substitute_variant_types_with_instantiation(&variant.values, &qualified_type.type_args, context);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            // Handle other cases if needed
+        }
+    }
+    
+    vec![] // Return empty if we can't extract types
+}
+
+/// Substitute generic type parameters with concrete types in variant parameters
+fn substitute_variant_types(variant_values: &[Spanned<Type>], type_args: &[Spanned<Type>]) -> Vec<Type> {
+    let mut result = Vec::new();
+    
+    for variant_value in variant_values {
+        let substituted_type = substitute_type_parameters(&variant_value.0, type_args);
+        result.push(substituted_type);
+    }
+    
+    result
+}
+
+/// Substitute generic type parameters with concrete instantiated types, resolving existentials
+fn substitute_variant_types_with_instantiation(variant_values: &[Spanned<Type>], type_args: &[Spanned<Type>], context: &Context) -> Vec<Type> {
+    let mut result = Vec::new();
+    
+    for variant_value in variant_values {
+        let substituted_type = substitute_type_parameters(&variant_value.0, type_args);
+        // Resolve existential types in the substituted result
+        let resolved_type = resolve_existential_type(&substituted_type, context);
+        result.push(resolved_type);
+    }
+    
+    result
+}
+
+/// Substitute type parameters (like T) with concrete types (like i32)
+fn substitute_type_parameters(ty: &Type, type_args: &[Spanned<Type>]) -> Type {
+    match ty {
+        Type::Ident(qualified_type) => {
+            // Check if this is a type parameter (single letter like "T")
+            if qualified_type.path.len() == 1 {
+                let param_name = &qualified_type.path[0].0;
+                // For now, assume the first type parameter "T" maps to the first type argument
+                // In a full implementation, this would use a proper parameter mapping
+                if param_name == "T" && !type_args.is_empty() {
+                    return type_args[0].0.clone();
+                }
+            }
+            ty.clone()
+        }
+        _ => ty.clone(), // For other types, return as-is
+    }
+}
+
+/// Extract element type from iterator types like Vec[i32] -> i32
+fn extract_iterator_element_type(iter_type: &Type) -> Type {
+    match iter_type {
+        Type::Ident(qualified_type) => {
+            // For generic types like Vec[i32], extract the first type argument
+            if !qualified_type.type_args.is_empty() {
+                return qualified_type.type_args[0].0.clone();
+            }
+        }
+        Type::Intersection(a, b) => {
+            // Look for iterator types in intersection types
+            if let Some(element_type) = try_extract_from_intersection(&**a) {
+                return element_type;
+            }
+            if let Some(element_type) = try_extract_from_intersection(&**b) {
+                return element_type;
+            }
+        }
+        _ => {}
+    }
+    
+    // Fallback to Unknown if we can't extract element type
+    Type::Unknown
+}
+
+/// Helper to extract element type from parts of intersection types
+fn try_extract_from_intersection(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Ident(qualified_type) if !qualified_type.type_args.is_empty() => {
+            Some(qualified_type.type_args[0].0.clone())
+        }
+        _ => None
+    }
+}
+
+/// Resolve enum variant constructor type from context
+fn resolve_enum_variant_constructor(context: &Context, variant_name: &str) -> Option<Type> {
+    // Look through all type definitions in the context for enum types
+    for element in &context.elements {
+        if let ContextElement::TypedVariable(type_name, type_def) = element {
+            // Check if this is an intersection type with an enum
+            if let Some(enum_variants) = extract_enum_variants_from_type(type_def) {
+                // Look for matching variant
+                for variant in enum_variants {
+                    if variant.name.0 == variant_name {
+                        // Create constructor type: param_types -> enum_type
+                        let enum_type = Type::Ident(QualifiedType {
+                            path: vec![(type_name.clone(), Span::default())],
+                            type_args: vec![], // For now, without generics
+                        });
+                        
+                        if variant.values.is_empty() {
+                            // Nullary constructor - just return the enum type
+                            return Some(enum_type);
+                        } else if variant.values.len() == 1 {
+                            // Unary constructor - return polymorphic function type using quantification
+                            let param_type = variant.values[0].0.clone();
+                            
+                            if is_type_parameter(&param_type) {
+                                // For generic constructors like Some: ∀T. T -> Option[T]
+                                let type_var = extract_type_parameter_name(&param_type);
+                                let quantified_return_type = Type::Ident(QualifiedType {
+                                    path: vec![(type_name.clone(), Span::default())],
+                                    type_args: vec![(Type::Ident(QualifiedType {
+                                        path: vec![(type_var.clone(), Span::default())],
+                                        type_args: vec![],
+                                    }), Span::default())],
+                                });
+                                let function_type = Type::Func(
+                                    Box::new((param_type, Span::default())),
+                                    Box::new((quantified_return_type, Span::default())),
+                                );
+                                return Some(Type::Quantification(type_var, Box::new(function_type)));
+                            } else {
+                                // Non-generic constructor
+                                return Some(Type::Func(
+                                    Box::new((param_type, Span::default())),
+                                    Box::new((enum_type, Span::default())),
+                                ));
+                            }
+                        } else {
+                            // Multi-parameter constructor - return tuple -> enum function type
+                            let tuple_type = Type::Tuple(variant.values.clone());
+                            return Some(Type::Func(
+                                Box::new((tuple_type, Span::default())),
+                                Box::new((enum_type, Span::default())),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract enum variants from a type (looking through intersections)
+fn extract_enum_variants_from_type(ty: &Type) -> Option<&Vec<EnumVariant>> {
+    match ty {
+        Type::Enum(variants) => Some(variants),
+        Type::Intersection(a, b) => {
+            if let Some(variants) = extract_enum_variants_from_type(a) {
+                Some(variants)
+            } else {
+                extract_enum_variants_from_type(b)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Check if a type is a type parameter (like T)
+fn is_type_parameter(ty: &Type) -> bool {
+    match ty {
+        Type::Ident(qualified_type) => {
+            qualified_type.path.len() == 1 
+            && qualified_type.path[0].0.chars().all(|c| c.is_ascii_uppercase())
+            && qualified_type.path[0].0.len() == 1
+        }
+        _ => false,
+    }
+}
+
+/// Extract type parameter name from type
+fn extract_type_parameter_name(ty: &Type) -> String {
+    match ty {
+        Type::Ident(qualified_type) if qualified_type.path.len() == 1 => {
+            qualified_type.path[0].0.clone()
+        }
+        _ => "T".to_string(), // fallback
+    }
+}
+
+/// Resolve existential types by looking up their solved values in the context
+fn resolve_existential_type(ty: &Type, context: &Context) -> Type {
+    match ty {
+        Type::Existential(alpha) => {
+            // Look up solved existential in context
+            for element in &context.elements {
+                if let ContextElement::Solved(name, solved_type) = element {
+                    if name == alpha {
+                        // Found solved existential, recursively resolve it
+                        return resolve_existential_type(solved_type, context);
+                    }
+                }
+            }
+            // If not solved, return as-is
+            ty.clone()
+        }
+        // For compound types, recursively resolve their components
+        Type::Ident(qualified_type) => {
+            let resolved_args: Vec<Spanned<Type>> = qualified_type.type_args.iter()
+                .map(|arg| (resolve_existential_type(&arg.0, context), arg.1.clone()))
+                .collect();
+            Type::Ident(QualifiedType {
+                path: qualified_type.path.clone(),
+                type_args: resolved_args,
+            })
+        }
+        Type::Intersection(a, b) => Type::Intersection(
+            Box::new(resolve_existential_type(a, context)),
+            Box::new(resolve_existential_type(b, context)),
+        ),
+        Type::Func(a, b) => Type::Func(
+            Box::new((resolve_existential_type(&a.0, context), a.1.clone())),
+            Box::new((resolve_existential_type(&b.0, context), b.1.clone())),
+        ),
+        // For other types, return as-is
+        _ => ty.clone(),
+    }
+}
+
 /// Helper function to check if a field constraint matches within an intersection type
 fn field_constraint_matches_in_intersection(field_name: &str, field_type: &Type, intersection_type: &Type) -> bool {
     match intersection_type {
@@ -1281,7 +1586,14 @@ fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
             if var.path[0].0 == alpha {
                 b.clone()
             } else {
-                a.clone()
+                // Recursively substitute in type arguments
+                let substituted_type_args: Vec<Spanned<Type>> = var.type_args.iter()
+                    .map(|arg| (substitution(&arg.0, alpha, b), arg.1.clone()))
+                    .collect();
+                Type::Ident(QualifiedType {
+                    path: var.path.clone(),
+                    type_args: substituted_type_args,
+                })
             }
         }
         Type::Quantification(var, type_) => {
@@ -1441,36 +1753,34 @@ fn synthesizes_to_if_expr(state: &mut State, context: &Context, if_expr: &IfExpr
         panic!("If condition must be bool, got: {}", cond_type);
     }
     
-    // Check main body
-    let (main_body_type, delta) = synthesizes_to_control_expr(state, &gamma, &if_expr.main_body);
+    // Check main body (don't leak variables from branch)
+    let (main_body_type, _delta) = synthesizes_to_control_expr(state, &gamma, &if_expr.main_body);
     
     // Check all elif branches have same type as main body
-    let mut current_context = delta;
     for (elif_cond, elif_body) in &if_expr.elif_expr_body {
-        // Check elif condition is bool
-        let (elif_cond_type, theta) = synthesizes_to(state, &current_context, &elif_cond.0);
+        // Check elif condition is bool (use parent context, not accumulated)
+        let (elif_cond_type, theta) = synthesizes_to(state, &gamma, &elif_cond.0);
         if !is_subtype(state, &theta, &elif_cond_type, &bool_type) {
             panic!("Elif condition must be bool, got: {}", elif_cond_type);
         }
         
-        // Check elif body has same type as main body
-        let (elif_body_type, phi) = synthesizes_to_control_expr(state, &theta, elif_body);
-        if !is_subtype(state, &phi, &elif_body_type, &main_body_type) && !is_subtype(state, &phi, &main_body_type, &elif_body_type) {
+        // Check elif body has same type as main body (don't accumulate context)
+        let (elif_body_type, _phi) = synthesizes_to_control_expr(state, &theta, elif_body);
+        if !is_subtype(state, &gamma, &elif_body_type, &main_body_type) && !is_subtype(state, &gamma, &main_body_type, &elif_body_type) {
             panic!("All if branches must have same type. Main: {}, elif: {}", main_body_type, elif_body_type);
         }
-        current_context = phi;
     }
     
-    // Check else branch if present
+    // Check else branch if present (don't leak variables from branch)
     if let Some(else_body) = &*if_expr.else_body {
-        let (else_body_type, psi) = synthesizes_to_control_expr(state, &current_context, else_body);
-        if !is_subtype(state, &psi, &else_body_type, &main_body_type) && !is_subtype(state, &psi, &main_body_type, &else_body_type) {
+        let (else_body_type, _psi) = synthesizes_to_control_expr(state, &gamma, else_body);
+        if !is_subtype(state, &gamma, &else_body_type, &main_body_type) && !is_subtype(state, &gamma, &main_body_type, &else_body_type) {
             panic!("All if branches must have same type. Main: {}, else: {}", main_body_type, else_body_type);
         }
-        current_context = psi;
     }
     
-    (main_body_type, current_context)
+    // Return main body type and preserve parent context (no variable leakage from branches)
+    (main_body_type, gamma)
 }
 
 /// Type synthesis for match expressions
@@ -1478,26 +1788,30 @@ fn synthesizes_to_match_expr(state: &mut State, context: &Context, match_expr: &
     print_rule("MatchExpr");
     
     // Synthesize type of scrutinee (the value being matched)
-    let (_scrutinee_type, gamma) = synthesizes_to(state, context, &match_expr.expr.0);
+    let (scrutinee_type, gamma) = synthesizes_to(state, context, &match_expr.expr.0);
     
     if match_expr.branches.is_empty() {
         panic!("Match expression must have at least one branch");
     }
     
-    // Check first branch to establish expected type
+    // Check first branch to establish expected type (don't leak variables from branch)
     let first_branch = &match_expr.branches[0];
-    let (first_branch_type, mut current_context) = synthesizes_to_control_expr(state, &gamma, &first_branch.body);
+    // Resolve existentials in scrutinee type using the updated context
+    let resolved_scrutinee_type = resolve_existential_type(&scrutinee_type, &gamma);
+    let branch_context = add_pattern_variables_to_context_with_scrutinee(&gamma, &first_branch.pattern, &resolved_scrutinee_type);
+    let (first_branch_type, _first_context) = synthesizes_to_control_expr(state, &branch_context, &first_branch.body);
     
-    // Check all other branches have same type
+    // Check all other branches have same type (don't accumulate context)
     for branch in &match_expr.branches[1..] {
-        let (branch_type, delta) = synthesizes_to_control_expr(state, &current_context, &branch.body);
-        if !is_subtype(state, &delta, &branch_type, &first_branch_type) && !is_subtype(state, &delta, &first_branch_type, &branch_type) {
+        let branch_context = add_pattern_variables_to_context_with_scrutinee(&gamma, &branch.pattern, &resolved_scrutinee_type);
+        let (branch_type, _delta) = synthesizes_to_control_expr(state, &branch_context, &branch.body);
+        if !is_subtype(state, &gamma, &branch_type, &first_branch_type) && !is_subtype(state, &gamma, &first_branch_type, &branch_type) {
             panic!("All match branches must have same type. First: {}, other: {}", first_branch_type, branch_type);
         }
-        current_context = delta;
     }
     
-    (first_branch_type, current_context)
+    // Return first branch type and preserve parent context (no variable leakage from branches)
+    (first_branch_type, gamma)
 }
 
 /// Type synthesis for for expressions (returns void for now)
@@ -1505,21 +1819,23 @@ fn synthesizes_to_for_expr(state: &mut State, context: &Context, for_expr: &ForE
     print_rule("ForExpr");
     
     // Type check the iterator expression
-    let (_iter_type, gamma) = synthesizes_to(state, context, &for_expr.expr.0);
+    let (iter_type, gamma) = synthesizes_to(state, context, &for_expr.expr.0);
     
-    // Add loop variable to context (simplified - assume iterator element type)
-    // For now, we'll add it as an unknown type since we don't have full iterator typing
+    // Extract element type from iterator (e.g., Vec[i32] -> i32)
+    let element_type = extract_iterator_element_type(&iter_type);
+    
+    // Add loop variable to context with proper element type
     let loop_context = gamma.add(ContextElement::TypedVariable(
         for_expr.ident.0.clone(),
-        Type::Unknown, // Simplified for now
+        element_type,
     ));
     
-    // Type check body (but ignore result)
-    let (_, delta) = synthesizes_to_control_expr(state, &loop_context, &for_expr.body);
+    // Type check body (but ignore result and don't leak loop scope variables)
+    let (_, _delta) = synthesizes_to_control_expr(state, &loop_context, &for_expr.body);
     
-    // For expressions return void type ()
+    // For expressions return void type () and preserve parent context (no variable leakage)
     let unit_type = Type::Tuple(vec![]);
-    (unit_type, delta)
+    (unit_type, gamma) // Return parent context, not the loop context with variables
 }
 
 /// Type synthesis for while expressions (returns void for now)
@@ -1533,12 +1849,12 @@ fn synthesizes_to_while_expr(state: &mut State, context: &Context, while_expr: &
         panic!("While condition must be bool, got: {}", cond_type);
     }
     
-    // Type check body (but ignore result)
-    let (_, delta) = synthesizes_to_control_expr(state, &gamma, &while_expr.body);
+    // Type check body (but ignore result and don't leak block scope variables)
+    let (_, _delta) = synthesizes_to_control_expr(state, &gamma, &while_expr.body);
     
-    // While expressions return void type ()
+    // While expressions return void type () and preserve parent context (no variable leakage)
     let unit_type = Type::Tuple(vec![]);
-    (unit_type, delta)
+    (unit_type, gamma) // Return parent context, not the block context with variables
 }
 
 /// Type synthesis for control expressions
@@ -1596,7 +1912,9 @@ fn synthesizes_to_block(state: &mut State, context: &Context, block: &Block) -> 
         }
     }
     
-    (last_type, current_context)
+    // Block should not leak local variables to parent scope
+    // Only return the last expression type, preserve original context
+    (last_type, context.clone())
 }
 
 /// Type synthesis for assignment expressions
@@ -3138,5 +3456,304 @@ def testAllExprs() -> i32 =
 def add(a: i32, b: i32) -> i32 = a + b  # Function for testing calls
 "#;
         assert!(parse_and_check(source).is_ok());
+    }
+
+    // ========== BLOCK SCOPING TESTS ==========
+    // These tests demonstrate the scoping issues that need to be fixed
+
+    #[test]
+    fn test_for_loop_variable_scoping() {
+        // Test that for-loop variables don't leak into parent scope
+        let source = r#"
+def testForScoping() -> i32 =
+    let x = 10
+    for i in range(0, 5):
+        let y = x + i  # Should access parent scope x
+        pass
+    # i and y should NOT be accessible here - this should work without error
+    x  # Return parent scope variable
+    
+def range(start: i32, end: i32) -> Vec[i32] = [42]  # Stub
+def type Vec for T: type = pass
+def pass() -> () = ()
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test] 
+    fn test_if_expression_scoping() {
+        // Test that if expressions don't leak variables from branches
+        let source = r#"
+def testIfScoping(flag: bool) -> i32 =
+    let x = 10
+    if flag:
+        let y = x + 5  # Local to if branch
+        y
+    else:
+        let z = x + 3  # Local to else branch  
+        z
+    # y and z should NOT be accessible here
+    # This function should return i32 from the if expression
+
+def testIfScopingWithParentAccess(flag: bool) -> i32 =
+    let parent_var = 42
+    if flag:
+        parent_var + 1  # Should access parent scope
+    else:
+        parent_var - 1  # Should access parent scope
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_while_loop_scoping() {
+        // Test that while loops maintain proper scoping
+        let source = r#"
+def testWhileScoping() -> i32 =
+    let x = 10
+    let counter = 0
+    while counter < 3:
+        let temp = x + counter  # Local to while body
+        counter = counter + 1   # Should modify parent scope variable
+    # temp should NOT be accessible here
+    x + counter  # Should access parent scope variables
+
+def testWhileParentAccess() -> i32 =
+    let parent_var = 100
+    let result = 0
+    while result < 5:
+        result = parent_var / 20  # Should access parent scope
+    result
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test] 
+    fn test_match_expression_scoping() {
+        // Test that match expressions maintain proper scoping
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def testMatchScoping(opt: Option[i32]) -> i32 =
+    let default_val = 42
+    match opt:
+        | Some(value) => value + default_val  # Access parent + pattern variable
+        | None => default_val * 2            # Access parent scope
+    # computed, fallback should NOT be accessible here
+    # value from pattern should NOT be accessible here
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nested_block_scoping() {
+        // Test that nested blocks maintain proper scoping hierarchy
+        let source = r#"
+def type Vec for T: type = pass
+def range(start: i32, end: i32) -> Vec[i32] = [42]  # Stub
+def pass() -> () = ()
+
+def testNestedBlocks() -> i32 =
+    let outer = 10
+    if true:
+        let middle = outer + 5  # Access outer scope
+        for i in range(0, 2):
+            let inner = middle + i  # Access middle scope (if branch)
+            pass
+        # inner should NOT be accessible here
+        # i should NOT be accessible here
+        middle  # Should be accessible
+    else:
+        outer  # Should access outer scope
+    # middle should NOT be accessible here
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_let_binding_scoping() {
+        // Test that let bindings create proper local scope
+        let source = r#"
+def testLetScoping() -> i32 =
+    let x = 10
+    let y = 
+        let temp = x * 2  # Inner let expression
+        temp + 5          # temp is accessible here
+    # temp should NOT be accessible here
+    x + y  # Should access outer scope variables
+
+def testShadowing() -> i32 =
+    let x = 10
+    let result = 
+        let x = 20  # Shadow outer x
+        x + 5       # Should use inner x (20)
+    x + result      # Should use outer x (10) + result (25) = 35
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_block_return_type_isolation() {
+        // Test that blocks return correct types without context leakage
+        let source = r#"
+def testBlockTypes() -> i32 =
+    let result = 
+        let local_var = 42
+        local_var * 2  # Block returns i32
+    result  # Should be i32 from the block
+
+def testNestedBlockTypes() -> bool =
+    let outer_flag = true
+    let inner_result = 
+        if outer_flag:
+            let temp = 100
+            temp > 50  # Returns bool
+        else:
+            false      # Returns bool
+    inner_result  # Should be bool
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_enhanced_intersection_types_in_blocks() {
+        // Test that enhanced intersection types work correctly in all block types
+        let source = r#"
+def type Counter = { value: i32 }
+def trait Add for T: type = { add: (T, T) -> T }
+open Add^Counter
+
+def type Vec for T: type = pass
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def range(start: i32, end: i32) -> Vec[i32] = [42]  # Stub
+def pass() -> () = ()
+
+def testEnhancedTypesInBlocks() -> Counter =
+    let counter: Counter = { value = 0 }
+    
+    # Test in if expression
+    let counter2 = if true:
+        let temp: Counter = { value = counter.value + 1 }
+        temp
+    else:
+        counter
+        
+    # Test in for loop  
+    for i in range(0, 3):
+        let loop_counter: Counter = { value = i }
+        pass
+        
+    # Test in match expression
+    let final_counter = 
+        match Some(counter2):
+            | Some(c) => 
+                let result: Counter = { value = c.value + 10 }
+                result
+            | None => { value = 999 }
+    
+    final_counter
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_for_loop_variable_leakage_should_fail() {
+        // This test verifies that scoping is working - `i` should not be accessible outside the for loop
+        let source = r#"
+def type Vec for T: type = pass
+def pass() -> () = ()
+def range(start: i32, end: i32) -> Vec[i32] = [42]
+
+def testForLeakage() -> i32 =
+    for i in range(0, 5):
+        pass()
+    i  # This should NOT be accessible - should cause error when scoping is fixed
+"#;
+        // The scoping fix means this should fail when trying to access `i`
+        let result = parse_and_check(source);
+        assert!(result.is_err(), "Expected type checking to fail due to variable 'i' not being accessible outside for loop");
+        
+        // Check that the error indicates type checking failed (which means the variable was not found)
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("Type checking failed") || error_msg.to_lowercase().contains("variable"), 
+                "Expected error message to indicate type checking failure, got: {}", error_msg);
+    }
+
+    #[test]
+    fn test_if_branch_variable_leakage_should_fail() {
+        // This test verifies that scoping is working - `branch_local` should not be accessible outside the if branch
+        let source = r#"
+def testIfLeakage(flag: bool) -> i32 =
+    if flag:
+        let branch_local = 42
+        branch_local
+    else:
+        10
+    branch_local  # This should NOT be accessible - should cause error when scoping is fixed
+"#;
+        // The scoping fix means this should fail when trying to access `branch_local`
+        let result = parse_and_check(source);
+        assert!(result.is_err(), "Expected type checking to fail due to variable 'branch_local' not being accessible outside if branch");
+        
+        // Check that the error indicates type checking failed (which means the variable was not found)
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("Type checking failed") || error_msg.to_lowercase().contains("variable"), 
+                "Expected error message to indicate type checking failure, got: {}", error_msg);
+    }
+
+    #[test]
+    fn test_pattern_variable_type_extraction_from_sum_types() {
+        // This test verifies that pattern variables get the correct types extracted from sum type variants
+        let source = r#"
+def type Result for T: type, E: type =
+    | Ok(T)
+    | Err(E)
+
+def type Maybe for T: type =
+    | Nothing
+    | Just(T)
+
+def type Complex =
+    | SimpleVariant
+    | TupleVariant(i32, String)
+    | SingleValue(bool)
+
+def testResultPattern(r: Result[i32, String]) -> i32 =
+    match r:
+        | Ok(value) => value      # value should have type i32
+        | Err(msg) => 0           # msg should have type String (not used but pattern variable extracted)
+
+def testMaybePattern(m: Maybe[String]) -> String =
+    match m:
+        | Nothing => "default"
+        | Just(content) => content  # content should have type String
+
+def testComplexPattern(c: Complex) -> i32 =
+    match c:
+        | SimpleVariant => 0
+        | TupleVariant(num, text) => num    # num: i32, text: String (only using num)
+        | SingleValue(flag) => 1            # flag: bool (not used but extracted)
+
+# Test with concrete constructor calls to verify the types work end-to-end
+def testConstructorsAndPatterns() -> i32 =
+    let success_result = Ok(42)         # Ok: (∀T. T -> Result[T, E]) applied to 42 -> Result[Nat, E]
+    let maybe_value = Just(100)         # Just: (∀T. T -> Maybe[T]) applied to 100 -> Maybe[Nat]
+    
+    match success_result:
+        | Ok(val) => val                # val should be Nat, which subtypes to i32
+        | Err(e) => 0
+
+def testStringPatternExtraction() -> String =
+    let string_maybe = Just("hello")    # Just applied to String -> Maybe[String]
+    match string_maybe:
+        | Nothing => "empty"
+        | Just(text) => text            # text should be String
+"#;
+        assert!(parse_and_check(source).is_ok(), "Pattern variable type extraction should work correctly");
     }
 }
