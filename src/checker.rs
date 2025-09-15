@@ -341,6 +341,10 @@ fn collect_module_symbols(program: &Program) -> Result<ModuleSymbolTable, String
     // PASS 2: Process ALL definitions with complete local_types knowledge
     for def in &program.defs {
         match def {
+            Def::Import(_import_stmt) => {
+                // TODO: Process import statements for cross-module support
+                // For now, skip imports until cross-module system is implemented
+            },
             Def::Type(type_def) => {
                 let type_name = &type_def.name.0;
                 // Note: add_local_type already called in pass 1

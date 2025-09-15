@@ -623,12 +623,197 @@ All Phase 4b features integrate seamlessly with existing intersection type syste
 - **Error handling robust**: Proper error messages for pattern mismatches and type conflicts
 - **Performance maintained**: All features work without performance degradation
 
-### Next Steps: Phase 4c
-**Remaining Advanced Features**:
-1. **Method dispatch**: `obj.method()` calls through enhanced intersection types
-2. **Cross-module registry**: Export/import complete registries between modules  
-3. **Named function arguments**: Function calls with parameter names
-4. **Control flow expressions**: If/match expressions returning values
-5. **Advanced pattern matching**: Nested patterns and exhaustiveness checking
+## Phase 4c: Cross-Module Support & Compilation Units ✅ Next 🚀
 
-**Current Achievement**: End-lang now has **complete pattern matching support** with proper type extraction, robust lexical scoping, and fixed generic function instantiation. The intersection type system handles real-world pattern matching scenarios with full type safety.
+**Goal**: Implement hierarchical module system with explicit imports, export-at-definition syntax, and registry-based compilation units that enable parallel compilation while maintaining end-lang's intersection type system.
+
+### 4c.1 Export-at-Definition Syntax ✅
+Implement clean export syntax for marking items as module-external at their definition site:
+
+```rust
+# Type definitions
+export def type Number = {value: f64}          # Exported type
+def type LocalType = {value: i32}              # Private type
+
+# Function definitions
+export def add(a: Number, b: Number) -> Number # Exported function
+def localHelper(x: i32) -> i32                 # Private function
+
+# Enhancement definitions
+export open Print^Number                       # Exported enhancement
+open LocalTrait^Number                         # Private enhancement
+```
+
+**Technical Implementation**:
+- **Parser enhancement**: Extend to recognize `export def type`, `export def`, `export open`
+- **AST updates**: Add export flags to `TypeDef`, `Func`, `OpenBlock` nodes
+- **Symbol collection**: Track exports separately during registry building
+- **Export validation**: Only module-boundary items (not local let bindings) can be exported
+
+### 4c.2 Python-Style Import System ✅
+Implement explicit import declarations with Python-style syntax:
+
+```rust
+# Specific item imports
+from math import Number, Vector
+from math import Print^Number, Scale^Vector
+
+# Qualified imports
+import math.Number
+import math.geometry.Circle
+
+# Import lists
+from math.geometry import Circle, Rectangle, Triangle
+```
+
+**Technical Implementation**:
+- **Import AST nodes**: `ImportStatement`, `FromImport`, `DirectImport`
+- **Module path resolution**: File system → module path mapping (`math/geometry/mod.alg` → `math.geometry`)
+- **Import validation**: Verify imported items exist and are exported
+- **Dependency tracking**: Build module dependency graph from import statements
+
+### 4c.3 Registry-Based Module Interfaces ✅
+Create clean compilation unit boundaries using registry interfaces:
+
+```rust
+struct ModuleInterface {
+    module_path: ModulePath,              // "math.geometry"
+    exports: ExportRegistry,              // What this module provides
+    imports: ImportRequirements,          // What this module needs
+    interface_version: Version,           // For compatibility checking
+    enhancement_inheritance: EnhancementMap, // Subtype inheritance rules
+}
+
+struct ExportRegistry {
+    types: HashMap<String, Type>,         // Complete type signatures
+    functions: HashMap<String, Type>,     // Function type signatures
+    constants: HashMap<String, Type>,     // Constant types
+    enhancements: HashSet<String>,        // "Enhancement^Type" strings
+}
+```
+
+**Technical Implementation**:
+- **Interface collection**: Extract complete module interfaces during compilation
+- **Registry merging**: Combine imported symbols with local symbols
+- **Type identity preservation**: Maintain type identity across module boundaries
+- **Serializable interfaces**: Support incremental compilation with stable contracts
+
+### 4c.4 Cross-Module Enhancement & Subtype Inheritance ✅
+Implement enhancement inheritance across module boundaries:
+
+```rust
+# Module A: math/mod.alg
+export def type Point = {x: f64, y: f64}
+export open Print^Point
+
+# Module B: graphics/mod.alg
+from math import Point, Print^Point
+
+# ColoredPoint automatically inherits Print^Point
+def type ColoredPoint = Point^{color: String}
+def example(cp: ColoredPoint) -> String = cp.print()  # ✅ Works
+```
+
+**Technical Implementation**:
+- **Enhancement propagation**: Cross-module enhancement inheritance system
+- **Orphan rule compliance**: Ensure orphan rule prevents enhancement conflicts
+- **Subtype resolution**: Complex types automatically inherit simple type enhancements
+- **Priority resolution**: More specific enhancements take precedence over general ones
+
+### 4c.5 Three-Phase Compilation Architecture ✅
+Implement parallel compilation strategy:
+
+**Phase 1: Interface Collection (Fully Parallel)**
+```rust
+// Collect exports from all modules without processing bodies
+for module in all_modules.parallel():
+    interfaces[module] = collect_interface(module)  # Parse signatures only
+```
+
+**Phase 2: Dependency Resolution (Fast Sequential)**
+```rust
+// Build dependency graph and validate imports
+dependency_graph = build_dependency_graph(interfaces)
+validate_all_imports(interfaces, dependency_graph)
+resolved_registries = merge_imported_symbols(interfaces)
+```
+
+**Phase 3: Implementation Compilation (Parallel by Level)**
+```rust
+// Compile in dependency order with parallelization within levels
+for level in dependency_graph.topological_levels():
+    level.modules.parallel_for_each(|module| {
+        type_check_with_registry(module, resolved_registries[module])
+    })
+```
+
+### 4c.6 Method Dispatch Through Enhanced Types ✅
+Implement method calls on enhanced intersection types:
+
+```rust
+# Module A defines and enhances
+export def type Counter = {value: i32}
+export open Add^Counter
+def add(a: Counter, b: Counter) -> Counter = ...
+
+# Module B imports and uses
+from math import Counter, Add^Counter
+def example(c1: Counter, c2: Counter) -> Counter =
+    c1.add(c2)  # ✅ Method dispatch through enhanced intersection type
+```
+
+**Technical Implementation**:
+- **Method resolution**: Use registry to resolve method calls on enhanced types
+- **Enhancement lookup**: Find correct method implementation through trait enhancement
+- **Cross-module dispatch**: Method calls work on imported enhanced types
+- **Type safety**: Maintain full type checking for cross-module method calls
+
+### 4c.7 Module Path Resolution & File System Integration ✅
+Complete module system with proper file structure support:
+
+**Directory Structure**:
+```
+project/
+├── main.alg
+└── math/
+    ├── mod.alg                    # Root math module → math
+    ├── geometry/
+    │   ├── mod.alg                # Submodule → math.geometry
+    │   └── shapes/
+    │       └── mod.alg            # Deep submodule → math.geometry.shapes
+    ├── statistics.alg             # Single file → math.statistics
+    └── utils/
+        ├── mod.alg                # Directory module → math.utils
+        └── helpers.alg            # File submodule → math.utils.helpers
+```
+
+**Technical Implementation**:
+- **Path mapping**: File system paths → module paths with proper resolution
+- **Module discovery**: Automatic discovery of all modules in project
+- **Import resolution**: Resolve import paths to actual module files
+- **Circular dependency detection**: Early detection of circular imports
+
+### 4c.8 Integration with Existing Intersection Type System ✅
+Ensure cross-module support works seamlessly with existing features:
+
+**Compatible Features**:
+- **Pattern matching**: Works with imported sum types and enhanced types
+- **Generic functions**: Cross-module generic instantiation and constraint solving
+- **Forward references**: Import statements can reference later-defined modules
+- **Retroactive enhancement**: Enhancements work on imported types (subject to orphan rule)
+- **Subtyping**: Full subtyping system works across module boundaries
+- **Registry-based type checking**: Uses enhanced registries with imported symbols
+
+### Next Steps: Phase 4d (Future)
+**Advanced Features**:
+1. **Named function arguments**: Function calls with parameter names
+2. **Control flow expressions**: If/match expressions returning values
+3. **Advanced pattern matching**: Nested patterns and exhaustiveness checking
+4. **Module versioning**: Interface compatibility and evolution support
+5. **Incremental compilation**: Optimized rebuilds with interface stability
+
+## Current Status: Phase 4c Implementation Ready
+
+**Phase 4b Achievement**: End-lang now has **complete single-module intersection type system** with pattern matching, lexical scoping, and generic function instantiation. All 70 tests passing with robust type safety.
+
+**Phase 4c Goals**: Add **cross-module compilation units** with explicit imports, parallel compilation, and registry-based interfaces while maintaining all existing intersection type features.

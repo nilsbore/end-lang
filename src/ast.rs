@@ -194,6 +194,7 @@ pub struct DefType {
     pub name: Spanned<String>,
     pub generics: Option<Generics>,
     pub ty: Spanned<Type>,
+    pub exported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -236,11 +237,30 @@ impl fmt::Display for QualifiedType {
 pub struct Open {
     pub ty: Spanned<Type>,
     pub generics: Option<Generics>,
+    pub exported: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Close {
     pub ty: Spanned<Type>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FromImport {
+    pub module_path: Vec<String>,
+    pub items: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DirectImport {
+    pub module_path: Vec<String>,
+    pub item: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImportStatement {
+    From(FromImport),
+    Direct(DirectImport),
 }
 
 // #[derive(Debug)]
@@ -283,6 +303,7 @@ pub struct Trait {
     pub name: Spanned<String>,
     pub generics: Generics,
     pub members: Vec<Item>,
+    pub exported: bool,
 }
 
 #[derive(Debug)]
@@ -298,6 +319,7 @@ pub struct Const {
     pub ty: Spanned<Type>,
     pub generics: Option<Generics>,
     pub value: Box<Spanned<Expr>>, //SrcNode<Expr>,
+    pub exported: bool,
 }
 
 #[derive(Debug)]
@@ -401,6 +423,7 @@ pub struct Func {
     //body: Spanned<Expr>,
     //pub body: Vec<Spanned<Expr>>, //SrcNode<Expr>,
     pub body: Box<AssignExpr>,
+    pub exported: bool,
 }
 
 #[derive(Debug)]
@@ -414,6 +437,7 @@ pub enum Def {
     Const(Const),
     Open(Open),
     Close(Close),
+    Import(ImportStatement),
 }
 
 #[derive(Debug)]
