@@ -178,7 +178,7 @@ struct ModuleSymbolTable {
 
 /// Complete trait definition with all members
 #[derive(Debug, Clone)]
-struct TraitDefinition {
+pub struct TraitDefinition {
     name: String,
     members: Vec<TraitMember>,
 }
@@ -294,6 +294,243 @@ impl ModuleSymbolTable {
         for type_name in type_names {
             self.apply_enhancements_in_place(&type_name);
         }
+    }
+}
+
+/// Module path type for hierarchical module system
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ModulePath {
+    pub path: Vec<String>,
+}
+
+impl ModulePath {
+    pub fn new(path: Vec<String>) -> Self {
+        ModulePath { path }
+    }
+
+    pub fn from_string(module_path: &str) -> Self {
+        if module_path.is_empty() {
+            ModulePath { path: vec![] }
+        } else {
+            ModulePath {
+                path: module_path.split('.').map(|s| s.to_string()).collect(),
+            }
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        self.path.join(".")
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.path.is_empty()
+    }
+}
+
+impl fmt::Display for ModulePath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+/// Export registry containing all module exports with complete type information
+#[derive(Debug, Clone)]
+pub struct ExportRegistry {
+    /// Exported types with complete signatures - includes intersection types
+    pub types: HashMap<String, Type>,
+
+    /// Exported function signatures with complete type information
+    pub functions: HashMap<String, Type>,
+
+    /// Exported constants with their declared types
+    pub constants: HashMap<String, Type>,
+
+    /// Exported enhancements - stored as "Enhancement^Type" strings for simplicity
+    pub enhancements: HashSet<String>,
+
+    /// Exported traits with complete member information
+    pub traits: HashMap<String, TraitDefinition>,
+}
+
+impl ExportRegistry {
+    pub fn new() -> Self {
+        ExportRegistry {
+            types: HashMap::new(),
+            functions: HashMap::new(),
+            constants: HashMap::new(),
+            enhancements: HashSet::new(),
+            traits: HashMap::new(),
+        }
+    }
+
+    /// Add an exported type with its complete intersection signature
+    pub fn add_type(&mut self, name: String, type_signature: Type) {
+        self.types.insert(name, type_signature);
+    }
+
+    /// Add an exported function with its complete signature
+    pub fn add_function(&mut self, name: String, function_signature: Type) {
+        self.functions.insert(name, function_signature);
+    }
+
+    /// Add an exported constant with its declared type
+    pub fn add_constant(&mut self, name: String, constant_type: Type) {
+        self.constants.insert(name, constant_type);
+    }
+
+    /// Add an exported enhancement in "Enhancement^Type" format
+    pub fn add_enhancement(&mut self, enhancement: String) {
+        self.enhancements.insert(enhancement);
+    }
+
+    /// Add an exported trait with complete definition
+    pub fn add_trait(&mut self, name: String, trait_def: TraitDefinition) {
+        self.traits.insert(name, trait_def);
+    }
+
+    /// Check if an item is exported by this registry
+    pub fn contains_item(&self, item_name: &str) -> bool {
+        self.types.contains_key(item_name) ||
+        self.functions.contains_key(item_name) ||
+        self.constants.contains_key(item_name) ||
+        self.traits.contains_key(item_name) ||
+        self.enhancements.contains(item_name)
+    }
+}
+
+/// Import requirements collected from import statements
+#[derive(Debug, Clone)]
+pub struct ImportRequirements {
+    /// Direct imports: module_path -> item_name
+    pub direct_imports: HashMap<ModulePath, String>,
+
+    /// From imports: module_path -> [item_names]
+    pub from_imports: HashMap<ModulePath, Vec<String>>,
+
+    /// All imported items regardless of source: item_name -> module_path
+    pub all_imports: HashMap<String, ModulePath>,
+}
+
+impl ImportRequirements {
+    pub fn new() -> Self {
+        ImportRequirements {
+            direct_imports: HashMap::new(),
+            from_imports: HashMap::new(),
+            all_imports: HashMap::new(),
+        }
+    }
+
+    /// Add a direct import: import module.path.item
+    pub fn add_direct_import(&mut self, module_path: ModulePath, item_name: String) {
+        self.all_imports.insert(item_name.clone(), module_path.clone());
+        self.direct_imports.insert(module_path, item_name);
+    }
+
+    /// Add items from a from import: from module.path import item1, item2
+    pub fn add_from_import(&mut self, module_path: ModulePath, items: Vec<String>) {
+        for item in &items {
+            self.all_imports.insert(item.clone(), module_path.clone());
+        }
+        self.from_imports.insert(module_path, items);
+    }
+
+    /// Get all unique module paths that this module depends on
+    pub fn get_dependencies(&self) -> HashSet<ModulePath> {
+        let mut deps = HashSet::new();
+        deps.extend(self.direct_imports.keys().cloned());
+        deps.extend(self.from_imports.keys().cloned());
+        deps
+    }
+}
+
+/// Complete module interface for cross-module compilation
+#[derive(Debug, Clone)]
+pub struct ModuleInterface {
+    /// The path of this module (e.g., "math.geometry")
+    pub module_path: ModulePath,
+
+    /// What this module exports to other modules
+    pub exports: ExportRegistry,
+
+    /// What this module imports from other modules
+    pub imports: ImportRequirements,
+
+    /// Interface version for compatibility checking
+    pub interface_version: u32,
+
+    /// Enhancement inheritance map: base_type -> [enhancement_types]
+    /// Used for cross-module enhancement inheritance
+    pub enhancement_inheritance: HashMap<String, Vec<String>>,
+}
+
+impl ModuleInterface {
+    pub fn new(module_path: ModulePath) -> Self {
+        ModuleInterface {
+            module_path,
+            exports: ExportRegistry::new(),
+            imports: ImportRequirements::new(),
+            interface_version: 1,
+            enhancement_inheritance: HashMap::new(),
+        }
+    }
+
+    /// Check if this module exports a particular item
+    pub fn exports_item(&self, item_name: &str) -> bool {
+        self.exports.types.contains_key(item_name) ||
+        self.exports.functions.contains_key(item_name) ||
+        self.exports.constants.contains_key(item_name) ||
+        self.exports.traits.contains_key(item_name) ||
+        self.exports.enhancements.contains(item_name)
+    }
+
+    /// Get all items exported by this module
+    pub fn get_exported_items(&self) -> HashSet<String> {
+        let mut items = HashSet::new();
+        items.extend(self.exports.types.keys().cloned());
+        items.extend(self.exports.functions.keys().cloned());
+        items.extend(self.exports.constants.keys().cloned());
+        items.extend(self.exports.traits.keys().cloned());
+        items.extend(self.exports.enhancements.iter().cloned());
+        items
+    }
+
+    /// Validate that all imports are satisfied by available exports
+    pub fn validate_imports(&self, available_modules: &HashMap<ModulePath, ModuleInterface>) -> Result<(), String> {
+        for (module_path, items) in &self.imports.from_imports {
+            if let Some(module_interface) = available_modules.get(module_path) {
+                for item in items {
+                    if !module_interface.exports_item(item) {
+                        return Err(format!(
+                            "Module {} does not export item '{}' required by module {}",
+                            module_path, item, self.module_path
+                        ));
+                    }
+                }
+            } else {
+                return Err(format!(
+                    "Module {} imports from non-existent module {}",
+                    self.module_path, module_path
+                ));
+            }
+        }
+
+        for (module_path, item) in &self.imports.direct_imports {
+            if let Some(module_interface) = available_modules.get(module_path) {
+                if !module_interface.exports_item(item) {
+                    return Err(format!(
+                        "Module {} does not export item '{}' required by module {}",
+                        module_path, item, self.module_path
+                    ));
+                }
+            } else {
+                return Err(format!(
+                    "Module {} imports from non-existent module {}",
+                    self.module_path, module_path
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -3759,5 +3996,288 @@ def testStringPatternExtraction() -> String =
         | Just(text) => text            # text should be String
 "#;
         assert!(parse_and_check(source).is_ok(), "Pattern variable type extraction should work correctly");
+    }
+
+    // ============================================================================
+    // Module System Tests
+    // ============================================================================
+
+    #[test]
+    fn test_module_path_creation_and_conversion() {
+        // Test creation from vector
+        let path1 = ModulePath::new(vec!["math".to_string(), "geometry".to_string()]);
+        assert_eq!(path1.path, vec!["math", "geometry"]);
+        assert_eq!(path1.to_string(), "math.geometry");
+        assert!(!path1.is_root());
+
+        // Test creation from string
+        let path2 = ModulePath::from_string("math.geometry.shapes");
+        assert_eq!(path2.path, vec!["math", "geometry", "shapes"]);
+        assert_eq!(path2.to_string(), "math.geometry.shapes");
+        assert!(!path2.is_root());
+
+        // Test root module
+        let root = ModulePath::from_string("");
+        assert!(root.is_root());
+        assert_eq!(root.to_string(), "");
+
+        // Test single module
+        let single = ModulePath::from_string("utils");
+        assert_eq!(single.path, vec!["utils"]);
+        assert_eq!(single.to_string(), "utils");
+        assert!(!single.is_root());
+    }
+
+    #[test]
+    fn test_export_registry_operations() {
+        let mut registry = ExportRegistry::new();
+
+        // Test type exports
+        let number_type = Type::Intersection(
+            Box::new(Type::Ident(QualifiedType {
+                path: vec![("Number".to_string(), 0..6)],
+                type_args: vec![],
+            })),
+            Box::new(Type::FieldConstraint("value".to_string(), Box::new((Type::Literal(LiteralType::Real), 0..4)))),
+        );
+        registry.add_type("Number".to_string(), number_type);
+        assert!(registry.types.contains_key("Number"));
+
+        // Test function exports
+        let add_func_type = Type::Func(
+            Box::new((Type::Tuple(vec![(Type::Literal(LiteralType::Int), 0..3), (Type::Literal(LiteralType::Int), 0..3)]), 0..6)),
+            Box::new((Type::Literal(LiteralType::Int), 0..3)),
+        );
+        registry.add_function("add".to_string(), add_func_type);
+        assert!(registry.functions.contains_key("add"));
+
+        // Test constant exports
+        registry.add_constant("PI".to_string(), Type::Literal(LiteralType::Real));
+        assert!(registry.constants.contains_key("PI"));
+
+        // Test enhancement exports
+        registry.add_enhancement("Print^Number".to_string());
+        assert!(registry.enhancements.contains("Print^Number"));
+
+        // Test trait exports
+        let print_trait = TraitDefinition {
+            name: "Print".to_string(),
+            members: vec![],
+        };
+        registry.add_trait("Print".to_string(), print_trait);
+        assert!(registry.traits.contains_key("Print"));
+    }
+
+    #[test]
+    fn test_import_requirements_operations() {
+        let mut imports = ImportRequirements::new();
+
+        // Test direct imports
+        let math_path = ModulePath::from_string("math");
+        imports.add_direct_import(math_path.clone(), "Number".to_string());
+        assert!(imports.direct_imports.contains_key(&math_path));
+        assert_eq!(imports.direct_imports.get(&math_path), Some(&"Number".to_string()));
+        assert_eq!(imports.all_imports.get("Number"), Some(&math_path));
+
+        // Test from imports
+        let geometry_path = ModulePath::from_string("math.geometry");
+        imports.add_from_import(
+            geometry_path.clone(),
+            vec!["Circle".to_string(), "Rectangle".to_string()],
+        );
+        assert!(imports.from_imports.contains_key(&geometry_path));
+        assert_eq!(
+            imports.from_imports.get(&geometry_path),
+            Some(&vec!["Circle".to_string(), "Rectangle".to_string()])
+        );
+        assert_eq!(imports.all_imports.get("Circle"), Some(&geometry_path));
+        assert_eq!(imports.all_imports.get("Rectangle"), Some(&geometry_path));
+
+        // Test dependencies
+        let deps = imports.get_dependencies();
+        assert!(deps.contains(&math_path));
+        assert!(deps.contains(&geometry_path));
+        assert_eq!(deps.len(), 2);
+    }
+
+    #[test]
+    fn test_module_interface_creation_and_operations() {
+        let math_path = ModulePath::from_string("math");
+        let mut interface = ModuleInterface::new(math_path.clone());
+
+        assert_eq!(interface.module_path, math_path);
+        assert_eq!(interface.interface_version, 1);
+
+        // Test adding exports
+        interface.exports.add_type("Number".to_string(), Type::Literal(LiteralType::Real));
+        interface.exports.add_function("add".to_string(), Type::Literal(LiteralType::Bool)); // Simplified for test
+        interface.exports.add_enhancement("Print^Number".to_string());
+
+        // Test exports_item
+        assert!(interface.exports_item("Number"));
+        assert!(interface.exports_item("add"));
+        assert!(interface.exports_item("Print^Number"));
+        assert!(!interface.exports_item("NonExistent"));
+
+        // Test get_exported_items
+        let exported = interface.get_exported_items();
+        assert!(exported.contains("Number"));
+        assert!(exported.contains("add"));
+        assert!(exported.contains("Print^Number"));
+        assert_eq!(exported.len(), 3);
+
+        // Test adding imports
+        let geometry_path = ModulePath::from_string("math.geometry");
+        interface.imports.add_from_import(geometry_path, vec!["Circle".to_string()]);
+        assert!(!interface.imports.get_dependencies().is_empty());
+    }
+
+    #[test]
+    fn test_module_interface_import_validation_success() {
+        // Create math module that exports Number
+        let math_path = ModulePath::from_string("math");
+        let mut math_interface = ModuleInterface::new(math_path.clone());
+        math_interface.exports.add_type("Number".to_string(), Type::Literal(LiteralType::Real));
+        math_interface.exports.add_function("add".to_string(), Type::Literal(LiteralType::Bool));
+
+        // Create geometry module that exports Circle
+        let geometry_path = ModulePath::from_string("math.geometry");
+        let mut geometry_interface = ModuleInterface::new(geometry_path.clone());
+        geometry_interface.exports.add_type("Circle".to_string(), Type::Literal(LiteralType::Bool));
+
+        // Create app module that imports from both
+        let app_path = ModulePath::from_string("app");
+        let mut app_interface = ModuleInterface::new(app_path);
+        app_interface.imports.add_from_import(math_path.clone(), vec!["Number".to_string(), "add".to_string()]);
+        app_interface.imports.add_direct_import(geometry_path.clone(), "Circle".to_string());
+
+        // Create module registry
+        let mut available_modules = HashMap::new();
+        available_modules.insert(math_path, math_interface);
+        available_modules.insert(geometry_path, geometry_interface);
+
+        // Validation should succeed
+        let result = app_interface.validate_imports(&available_modules);
+        assert!(result.is_ok(), "Import validation should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn test_module_interface_import_validation_missing_module() {
+        let app_path = ModulePath::from_string("app");
+        let mut app_interface = ModuleInterface::new(app_path);
+
+        // Import from non-existent module
+        let missing_path = ModulePath::from_string("missing");
+        app_interface.imports.add_from_import(missing_path, vec!["Something".to_string()]);
+
+        let available_modules = HashMap::new();
+        let result = app_interface.validate_imports(&available_modules);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-existent module"));
+    }
+
+    #[test]
+    fn test_module_interface_import_validation_missing_export() {
+        // Create math module that exports only Number
+        let math_path = ModulePath::from_string("math");
+        let mut math_interface = ModuleInterface::new(math_path.clone());
+        math_interface.exports.add_type("Number".to_string(), Type::Literal(LiteralType::Real));
+
+        // Create app module that tries to import non-existent item
+        let app_path = ModulePath::from_string("app");
+        let mut app_interface = ModuleInterface::new(app_path);
+        app_interface.imports.add_from_import(math_path.clone(), vec!["NonExistent".to_string()]);
+
+        let mut available_modules = HashMap::new();
+        available_modules.insert(math_path, math_interface);
+
+        let result = app_interface.validate_imports(&available_modules);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not export item 'NonExistent'"));
+    }
+
+    #[test]
+    fn test_module_interface_enhancement_inheritance() {
+        let math_path = ModulePath::from_string("math");
+        let mut interface = ModuleInterface::new(math_path);
+
+        // Test enhancement inheritance setup
+        interface.enhancement_inheritance.insert(
+            "Number".to_string(),
+            vec!["Print".to_string(), "Add".to_string()],
+        );
+
+        assert_eq!(
+            interface.enhancement_inheritance.get("Number"),
+            Some(&vec!["Print".to_string(), "Add".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_module_path_equality_and_hashing() {
+        let path1 = ModulePath::from_string("math.geometry");
+        let path2 = ModulePath::from_string("math.geometry");
+        let path3 = ModulePath::from_string("math.algebra");
+
+        // Test equality
+        assert_eq!(path1, path2);
+        assert_ne!(path1, path3);
+
+        // Test that paths can be used as HashMap keys
+        let mut module_map = HashMap::new();
+        module_map.insert(path1.clone(), "geometry_module");
+        module_map.insert(path3.clone(), "algebra_module");
+
+        assert_eq!(module_map.get(&path2), Some(&"geometry_module"));
+        assert_eq!(module_map.get(&path3), Some(&"algebra_module"));
+        assert_eq!(module_map.len(), 2);
+    }
+
+    #[test]
+    fn test_complex_module_dependency_chain() {
+        // Create a complex dependency chain: app -> graphics -> math
+
+        // Math module (no dependencies)
+        let math_path = ModulePath::from_string("math");
+        let mut math_interface = ModuleInterface::new(math_path.clone());
+        math_interface.exports.add_type("Number".to_string(), Type::Literal(LiteralType::Real));
+        math_interface.exports.add_type("Vector".to_string(), Type::Literal(LiteralType::Bool));
+
+        // Graphics module (depends on math)
+        let graphics_path = ModulePath::from_string("graphics");
+        let mut graphics_interface = ModuleInterface::new(graphics_path.clone());
+        graphics_interface.imports.add_from_import(
+            math_path.clone(),
+            vec!["Number".to_string(), "Vector".to_string()],
+        );
+        graphics_interface.exports.add_type("Color".to_string(), Type::Literal(LiteralType::Str));
+        graphics_interface.exports.add_type("Renderer".to_string(), Type::Literal(LiteralType::Bool));
+
+        // App module (depends on graphics and math)
+        let app_path = ModulePath::from_string("app");
+        let mut app_interface = ModuleInterface::new(app_path);
+        app_interface.imports.add_from_import(
+            graphics_path.clone(),
+            vec!["Color".to_string(), "Renderer".to_string()],
+        );
+        app_interface.imports.add_direct_import(math_path.clone(), "Vector".to_string());
+
+        // Validate the entire chain
+        let mut available_modules = HashMap::new();
+        available_modules.insert(math_path, math_interface);
+        available_modules.insert(graphics_path, graphics_interface.clone());
+
+        // Math module validation (no imports)
+        let math_result = available_modules.get(&ModulePath::from_string("math")).unwrap()
+            .validate_imports(&available_modules);
+        assert!(math_result.is_ok());
+
+        // Graphics module validation
+        let graphics_result = graphics_interface.validate_imports(&available_modules);
+        assert!(graphics_result.is_ok());
+
+        // App module validation
+        let app_result = app_interface.validate_imports(&available_modules);
+        assert!(app_result.is_ok());
     }
 }
