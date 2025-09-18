@@ -414,7 +414,14 @@ pub fn match_parser(
     });
 
     let pattern = recursive(|pattern| {
-        ident
+        // Base case: simple identifier pattern
+        let simple_pattern = ident
+            .clone()
+            .map_with_span(|name, span| (name, span))
+            .map(|ident| Pattern { ident, members: None });
+
+        // Recursive case: identifier with nested patterns
+        let complex_pattern = ident
             .clone()
             .map_with_span(|name, span| (name, span))
             .then(
@@ -425,9 +432,11 @@ pub fn match_parser(
                         just(Token::Open(Delim::Paren)),
                         just(Token::Close(Delim::Paren)),
                     )
-                    .or_not(),
             )
-            .map(|(ident, members)| Pattern { ident, members })
+            .map(|(ident, members)| Pattern { ident, members: Some(members) });
+
+        // Try complex pattern first, fall back to simple pattern
+        complex_pattern.or(simple_pattern)
     });
 
     let expr = expr_parser();

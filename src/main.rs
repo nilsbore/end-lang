@@ -17,14 +17,61 @@ use crate::checker::{check_program, ModulePath, ExportRegistry, ImportRequiremen
 use crate::module_system::{ModuleDiscovery, ModuleCollection};
 use crate::ast::{Program, Def, Type, Func};
 
+/// Preprocess source to handle empty lines in indented blocks and ensure newline ending
+fn preprocess_src(src: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut preprocessed_lines = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim().is_empty() && i > 0 && i < lines.len() - 1 {
+            // This is an empty line between other lines
+            let prev_line = lines[i - 1];
+            let next_line = lines[i + 1];
+
+            // Get indentation of previous and next lines
+            let prev_indent = prev_line.len() - prev_line.trim_start().len();
+            let next_indent = next_line.len() - next_line.trim_start().len();
+
+            // Check if both previous and next lines are indented and have content
+            let prev_indented = prev_indent > 0 && !prev_line.trim().is_empty();
+            let next_indented = next_indent > 0 && !next_line.trim().is_empty();
+
+            if prev_indented && next_indented {
+                // Insert a dummy comment with the same indentation as the next line
+                let indent_spaces = " ".repeat(next_indent);
+                preprocessed_lines.push(format!("{}# dummy", indent_spaces));
+            } else {
+                preprocessed_lines.push(line.to_string());
+            }
+        } else {
+            preprocessed_lines.push(line.to_string());
+        }
+    }
+
+    let mut result = preprocessed_lines.join("\n");
+
+    // Ensure input ends with newline for semantic_indentation parser
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+
+    result
+}
+
 fn parse(src: &str) -> Option<ast::Program> {
-    let (tts, errs) = lexer().parse_recovery(src);
+    let src_with_newline = preprocess_src(src);
+
+    //println!("=== Preprocessed Source ===");
+    //println!("{}", src_with_newline);
+    //println!("=== End Preprocessed Source ===");
+
+    let (tts, errs) = lexer().parse_recovery(src_with_newline.as_str());
 
     let (ast, parse_errs) = if let Some(tts) = tts {
         //println!("--- Token Trees ---\n{:#?}", tts);
 
         // Next, flatten
-        let eoi = 0..src.chars().count();
+        let eoi = 0..src_with_newline.chars().count();
         let token_stream = tts_to_stream(eoi, tts);
 
         // At this point, we have a token stream that can be fed into the main parser! Because this is just an example,
