@@ -104,15 +104,25 @@ pub fn expr_parser() -> impl Parser<Token, Spanned<Expr>, Error = Simple<Token>>
             ));
 
         //let member = atom.then_ignore(just(Token::Op(Op::Dot))).then(ident)
+        // Support chained member access: atom.field.subfield.etc
         let access = atom
             .clone()
-            .then_ignore(just(Token::Op(Op::Dot)))
             .then(
-                ident
-                    .map_with_span(|name, span| (name, span))
-                    .labelled("member name"),
+                just(Token::Op(Op::Dot))
+                    .ignore_then(
+                        ident
+                            .map_with_span(|name, span| (name, span))
+                            .labelled("member name")
+                    )
+                    .repeated()
+                    .at_least(1)
             )
-            .map_with_span(|(expr, member), span| (Expr::Member(Box::new(expr), member), span));
+            .map_with_span(|(expr, members), span| {
+                // Chain member accesses: a.b.c becomes Member(Member(a, b), c)
+                members.into_iter().fold(expr, |acc, member| {
+                    (Expr::Member(Box::new(acc), member), span.clone())
+                })
+            });
 
         let call = access
             .clone()

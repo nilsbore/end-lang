@@ -46,6 +46,12 @@ This is **end-lang**, an experimental programming language that combines structu
    - Basic types (Bool, Nat, Int, Real, Char, Str)
    - Composite types (Object, List, Dict, Tuple, Func)
 
+7. **Module System** (`src/module_system.rs`): Complete multi-module compilation system
+   - Module discovery and parsing from directory structures
+   - Export/import resolution with Python-style import syntax
+   - Three-phase compilation: Interface Collection → Dependency Resolution → Implementation Compilation
+   - Cross-module type checking with enhanced intersection types
+
 ### Key Language Features
 
 - **Type definitions**: `def type Person = { name: String, age: u8 }`
@@ -56,31 +62,146 @@ This is **end-lang**, an experimental programming language that combines structu
 - **Intersection types**: `i32^Add` creates a subtype of both i32 and Add
 - **Method syntax sugar**: `def Person.method(self: Person) -> ()` equivalent to open/close blocks
 - **Tuple literals**: `[1, 2, 3]` creates tuple expressions (square brackets, not lists)
+- **Module system**: Export-at-definition with `export def`, Python-style imports with `from module import item`
+- **Cross-module type checking**: Full intersection type system works across module boundaries
 
 ### Tuple Design Philosophy
 
-End-lang uses a distinctive approach to collection literals:
+End-lang uses a distinctive approach to collection literals with different syntax for types vs expressions:
 
-- **Tuple literals**: `[1, 2, 3]` creates `(i32, i32, i32)` tuple types using square bracket syntax
+- **Tuple expressions**: `[1, 2, 3]` creates tuple values using square bracket syntax
+- **Tuple types**: `(i32, i32, i32)` defines tuple types using parentheses syntax
 - **No built-in lists**: There is no built-in `List[T]` type - collections must be user-defined
 - **Type annotations**: Tuples have explicit arity - `[1, 2, 3]: (i32, i32, i32)` not `List[i32]`
-- **Parser design**: Square brackets `[...]` map to `Expr::Tuple` in the AST
+- **Parser design**: Square brackets `[...]` map to `Expr::Tuple`, parentheses `(...)` map to `Type::Tuple`
 - **Structural typing**: Tuples participate in the intersection type system like other types
 
-**Example**:
+**Key Distinction - Expression vs Type Syntax**:
 ```rust
+# Type definitions use parentheses
+def type Dataset = {values: (Number, Number, Number), count: i32}
+
+# Expressions use square brackets
+def dataset: Dataset = Dataset(values = [Number(value = 1), Number(value = 2), Number(value = 3)], count = 3)
+
+# Complete example
 def coordinates: (f64, f64, f64) = [1.0, 2.0, 3.0]  # Correct
 def invalid: List[i32] = [1, 2, 3]                  # Error: List undefined
 ```
 
-**Rationale**: This design emphasizes explicit typing and structural composition over convenient but potentially ambiguous collection types.
+**Rationale**: This design emphasizes explicit typing and structural composition over convenient but potentially ambiguous collection types, while maintaining clear separation between type and expression syntax.
+
+## Module System Architecture
+
+End-lang features a complete multi-module compilation system that supports the full intersection type system across module boundaries.
+
+### Module Organization
+
+**Directory Structure**:
+```
+examples/module_system/
+├── main.alg                    # Root module
+├── math/
+│   ├── mod.alg                 # math module
+│   ├── geometry/
+│   │   └── mod.alg            # math.geometry module
+│   ├── statistics.alg          # math.statistics module
+│   └── utils/
+│       ├── mod.alg            # math.utils module
+│       └── helpers.alg        # math.utils.helpers module
+└── graphics/
+    └── mod.alg                 # graphics module
+```
+
+### Export/Import Syntax
+
+**Export-at-definition syntax**:
+```rust
+# math/mod.alg
+export def type Number = {value: i32}
+export def add(x: Number, y: Number) -> Number = Number(value = x.value + y.value)
+export def multiply(x: Number, y: Number) -> Number = Number(value = x.value * y.value)
+```
+
+**Python-style import syntax**:
+```rust
+# main.alg
+from math import Number, add, multiply, subtract
+from graphics import Color, Shape, Drawable
+
+def main() -> i32 =
+    let num1 = Number(value = 10)
+    let result = add(num1, multiply(num1, Number(value = 2)))
+    result.value
+```
+
+### Three-Phase Compilation
+
+The module system uses a three-phase compilation architecture:
+
+1. **Phase 1: Interface Collection**
+   - Collect module interfaces from all modules in parallel
+   - Extract exports: types, functions, constants, traits
+   - Build complete module registry without dependencies
+
+2. **Phase 2: Dependency Resolution**
+   - Resolve import statements across modules
+   - Build dependency graph and topological ordering
+   - Validate import/export compatibility
+
+3. **Phase 3: Implementation Compilation**
+   - Compile modules in dependency order (levels)
+   - Type check with full cross-module symbol resolution
+   - Apply retroactive trait implementations globally
+
+### Key Features
+
+**Cross-Module Type Checking**:
+- Full intersection type system works across modules
+- Enhanced types from one module are available in importing modules
+- Retroactive trait implementations apply globally
+
+**Forward References**:
+- Modules can reference types/functions defined later in the same module
+- Cross-module forward references work through interface collection
+
+**Enhanced Type Propagation**:
+- Trait implementations in one module enhance types visible to importing modules
+- `open Add^Counter` in module A affects `Counter` usage in module B
+
+### Important Implementation Details
+
+**Preprocessing Consistency**:
+- Both single-file and multi-module parsing use the same `preprocess_src()` function
+- Located in `src/utils.rs` and applied consistently in `src/main.rs` and `src/module_system.rs`
+- Critical for let statements in function bodies and proper block syntax handling
+
+**Parser Features**:
+- **Chained member access**: `r.end.value` fully supported through recursive parsing
+- **Tuple syntax**: Square brackets `[]` for expressions, parentheses `()` for types
+- **Import statement parsing**: Full AST support for `from module import item` syntax
+
+**Testing**:
+- Complete end-to-end module system testing with `examples/module_system/`
+- All 8 modules parse and type check successfully
+- Complex features: imports, exports, chained member access, let statements in function bodies
 
 ## Development Commands
 
 ### Build and Run
 ```bash
-cargo build          # Build the project
-cargo run <file.alg>  # Parse and analyze a source file
+cargo build                    # Build the project
+cargo run <file.alg>           # Parse and analyze a single source file
+cargo run <directory>          # Parse and analyze a module collection
+```
+
+### Module System Examples
+```bash
+# Single file mode
+cargo run examples/syntax.alg
+
+# Module collection mode
+cargo run examples/module_system    # Complete module system with 8 modules
 ```
 
 ### Testing
@@ -91,10 +212,15 @@ cargo check          # Fast syntax/type checking
 
 ### Example Files
 The `examples/` directory contains various language examples:
-- `syntax.alg` - Main syntax examples (most up-to-date)
+- `syntax.alg` - Main syntax examples (most up-to-date single file)
 - `types.alg`, `struct.alg`, `enum.alg` - Type system examples
 - `trait.alg` - Trait definition and implementation examples
 - `generic_*.alg` - Generic programming examples
+- `module_system/` - Complete multi-module system with 8 modules demonstrating:
+  - Cross-module imports and exports
+  - Complex type definitions and trait implementations
+  - Chained member access and let statements in function bodies
+  - Real-world module organization patterns
 
 ## Development Notes
 
@@ -486,4 +612,73 @@ The implementation demonstrates that **intersection types can serve as the core 
 - Orphan rule compliance preventing conflicting implementations
 - Real-world program complexity with multiple types, traits, and enhancements
 
-**Next**: Phase 4 will implement method dispatch through enhanced intersection types and cross-module registry support for complete multi-module intersection type systems.
+### Phase 4 Complete ✅ - Multi-Module System Achieved
+
+The compiler has achieved **complete multi-module compilation** with full intersection type system support:
+
+**Phase 4 achievements:**
+- **Complete module system**: 8-module examples/module_system fully working
+- **Three-phase compilation**: Interface Collection → Dependency Resolution → Implementation Compilation
+- **Cross-module type checking**: Full intersection types work across module boundaries
+- **Export/import resolution**: Python-style `from module import item` syntax fully implemented
+- **Enhanced type propagation**: Retroactive trait implementations apply globally across modules
+- **Directory-based module discovery**: Automatic module path resolution from filesystem
+- **Preprocessing consistency**: Single-file and multi-module parsing use identical preprocessing
+- **Parser enhancements**: Chained member access (`r.end.value`) and correct tuple syntax
+- **End-to-end validation**: All parsing, type checking, and compilation phases working
+
+**Technical Evidence from `examples/module_system`**:
+```
+Module collection mode: parsing directory "examples/module_system"
+Found 8 modules
+Successfully parsed 8 modules
+=== Phase 1: Interface Collection ===
+Phase 1 complete: Collected 8 module interfaces
+=== Phase 2: Dependency Resolution ===
+Phase 2 complete: Resolved dependencies for 8 modules
+=== Phase 3: Implementation Compilation ===
+Phase 3 complete: All modules compiled successfully
+Module collection compiled successfully!
+```
+
+**Current Status**: End-lang now has a **complete multi-module intersection type system** with full parsing, type checking, and compilation support. The implementation successfully demonstrates intersection types as a practical foundation for a modern programming language with advanced module system capabilities.
+
+**Next priorities**: Method dispatch through enhanced intersection types, advanced pattern matching, and performance optimizations.
+
+## Contributor Guidelines
+
+### Module System Development
+
+**Critical Implementation Details for Contributors**:
+
+1. **Preprocessing Consistency**: Any changes to parsing logic MUST maintain consistency between single-file and multi-module modes:
+   - Single file: `parse()` in `src/main.rs` uses `preprocess_src()` from `src/utils.rs`
+   - Multi-module: `parse_module_source()` in `src/module_system.rs` uses the same `preprocess_src()`
+   - **Never** modify parsing without ensuring both paths use identical preprocessing
+
+2. **Tuple Syntax Rules**:
+   - **Type definitions**: Always use parentheses `(T, U, V)` for tuple types
+   - **Expressions**: Always use square brackets `[value1, value2, value3]` for tuple values
+   - **Parser mapping**: `[...]` → `Expr::Tuple`, `(...)` → `Type::Tuple`
+
+3. **Member Access Parsing**:
+   - Chained access like `obj.field.subfield` is supported through recursive `.repeated()` parsing
+   - Located in `src/parser.rs` around lines 107-125
+   - Avoid breaking the chain by ensuring left-recursion is handled properly
+
+4. **Module System Architecture**:
+   - **Three phases must remain separate**: Interface Collection, Dependency Resolution, Implementation Compilation
+   - **Cross-module types**: Enhanced intersection types from one module affect all importing modules
+   - **Registry consistency**: `ModuleSymbolTable` must contain complete type information for cross-module resolution
+
+5. **Testing Requirements**:
+   - Any parser changes must pass both `cargo run examples/syntax.alg` (single file) and `cargo run examples/module_system` (multi-module)
+   - New language features should be tested in both modes
+   - Module system tests are integration tests - they validate the entire compilation pipeline
+
+### Common Pitfalls
+
+- **Forgetting preprocessing**: Adding new parsing logic without applying `preprocess_src()` will break let statements in function bodies
+- **Mixing tuple syntax**: Using `[T, U, V]` in type definitions or `(value1, value2, value3)` in expressions will fail parsing
+- **Breaking member access chains**: Modifying member access parsing without considering recursion will break `obj.field.subfield` syntax
+- **Incomplete registry information**: The module system requires complete type information at module boundaries - partial type information will break cross-module resolution

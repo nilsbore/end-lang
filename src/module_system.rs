@@ -6,6 +6,7 @@ use crate::ast::Program;
 use crate::checker::ModulePath;
 use crate::lexer::{lexer, tts_to_stream};
 use crate::parser::program_parser;
+use crate::utils::preprocess_src;
 use chumsky::prelude::*;
 
 /// Represents a discovered module with its source code and metadata
@@ -160,7 +161,9 @@ pub struct ModuleParseError {
 
 /// Parse a single module's source code into an AST
 pub fn parse_module_source(source_code: &str) -> Result<Program, Vec<String>> {
-    let (tts, lex_errors) = lexer().parse_recovery(source_code);
+    // Apply the same preprocessing as single file mode
+    let preprocessed_source = preprocess_src(source_code);
+    let (tts, lex_errors) = lexer().parse_recovery(preprocessed_source.as_str());
 
     let mut all_errors = Vec::new();
 
@@ -171,7 +174,7 @@ pub fn parse_module_source(source_code: &str) -> Result<Program, Vec<String>> {
 
     let program = if let Some(tts) = tts {
         // Flatten token trees into token stream
-        let eoi = 0..source_code.chars().count();
+        let eoi = 0..preprocessed_source.chars().count();
         let token_stream = tts_to_stream(eoi, tts);
 
         // Parse the token stream

@@ -17,6 +17,6 @@ export def analyze(d: Dataset) -> StatResult =
 
 # Utility functions for dataset creation
 export def create_dataset(count: i32) -> Dataset =
-    Dataset(values = (Number(value = 1), Number(value = 2), Number(value = 3)), count = count)
+    Dataset(values = [Number(value = 1), Number(value = 2), Number(value = 3)], count = count)
 
 export def dataset_size(d: Dataset) -> Number = Number(value = d.count)

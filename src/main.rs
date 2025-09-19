@@ -13,50 +13,11 @@ mod utils;
 mod module_system;
 use crate::lexer::{lexer, tts_to_stream};
 use crate::parser::program_parser;
-use crate::checker::{check_program, ModulePath, ExportRegistry, ImportRequirements, ModuleInterface};
+use crate::checker::{check_program, check_program_with_imports, ResolvedRegistry, ModulePath, ExportRegistry, ImportRequirements, ModuleInterface};
 use crate::module_system::{ModuleDiscovery, ModuleCollection};
 use crate::ast::{Program, Def, Type, Func};
+use crate::utils::preprocess_src;
 
-/// Preprocess source to handle empty lines in indented blocks and ensure newline ending
-fn preprocess_src(src: &str) -> String {
-    let lines: Vec<&str> = src.lines().collect();
-    let mut preprocessed_lines = Vec::new();
-
-    for (i, line) in lines.iter().enumerate() {
-        if line.trim().is_empty() && i > 0 && i < lines.len() - 1 {
-            // This is an empty line between other lines
-            let prev_line = lines[i - 1];
-            let next_line = lines[i + 1];
-
-            // Get indentation of previous and next lines
-            let prev_indent = prev_line.len() - prev_line.trim_start().len();
-            let next_indent = next_line.len() - next_line.trim_start().len();
-
-            // Check if both previous and next lines are indented and have content
-            let prev_indented = prev_indent > 0 && !prev_line.trim().is_empty();
-            let next_indented = next_indent > 0 && !next_line.trim().is_empty();
-
-            if prev_indented && next_indented {
-                // Insert a dummy comment with the same indentation as the next line
-                let indent_spaces = " ".repeat(next_indent);
-                preprocessed_lines.push(format!("{}# dummy", indent_spaces));
-            } else {
-                preprocessed_lines.push(line.to_string());
-            }
-        } else {
-            preprocessed_lines.push(line.to_string());
-        }
-    }
-
-    let mut result = preprocessed_lines.join("\n");
-
-    // Ensure input ends with newline for semantic_indentation parser
-    if !result.ends_with('\n') {
-        result.push('\n');
-    }
-
-    result
-}
 
 fn parse(src: &str) -> Option<ast::Program> {
     let src_with_newline = preprocess_src(src);
@@ -270,41 +231,7 @@ struct DependencyLevel {
     modules: Vec<ModulePath>,
 }
 
-/// Registry with resolved imports for a module
-#[derive(Debug)]
-struct ResolvedRegistry {
-    /// Local types available in this module
-    types: HashMap<String, Type>,
-    /// Local functions available in this module
-    functions: HashMap<String, Type>,
-    /// Local constants available in this module
-    constants: HashMap<String, Type>,
-    /// Enhancements available in this module
-    enhancements: std::collections::HashSet<String>,
-}
 
-impl ResolvedRegistry {
-    fn new() -> Self {
-        Self {
-            types: HashMap::new(),
-            functions: HashMap::new(),
-            constants: HashMap::new(),
-            enhancements: std::collections::HashSet::new(),
-        }
-    }
-
-    fn merge_exports(&mut self, exports: &ExportRegistry) {
-        self.types.extend(exports.types.clone());
-        self.functions.extend(exports.functions.clone());
-        self.constants.extend(exports.constants.clone());
-        self.enhancements.extend(exports.enhancements.clone());
-    }
-
-    fn add_imports(&mut self, _source_module: ModulePath, _imported_items: Vec<String>) -> Result<(), String> {
-        // TODO: Implement proper import resolution
-        Ok(())
-    }
-}
 
 /// Parse an entire module collection from a directory
 fn parse_module_collection<P: AsRef<Path>>(root_path: P) -> Result<ModuleCollection, String> {
@@ -440,13 +367,21 @@ fn extract_exports(program: &Program) -> Result<ExportRegistry, String> {
 
 /// Extract import requirements from a module's AST
 fn extract_imports(program: &Program) -> Result<ImportRequirements, String> {
-    let imports = ImportRequirements::new();
+    let mut imports = ImportRequirements::new();
 
     for def in &program.defs {
         match def {
-            Def::Import(_import_stmt) => {
-                // TODO: Parse import statements when import AST nodes are available
-                // For now, return empty requirements
+            Def::Import(import_stmt) => {
+                match import_stmt {
+                    crate::ast::ImportStatement::From(from_import) => {
+                        let module_path = ModulePath::new(from_import.module_path.clone());
+                        imports.add_from_import(module_path, from_import.items.clone());
+                    }
+                    crate::ast::ImportStatement::Direct(direct_import) => {
+                        let module_path = ModulePath::new(direct_import.module_path.clone());
+                        imports.add_direct_import(module_path, direct_import.item.clone());
+                    }
+                }
             }
             _ => {}
         }
@@ -525,19 +460,31 @@ fn resolve_module_imports(
             }
         }
 
-        // Add imported items to registry
-        registry.add_imports(source_module.clone(), imported_items.clone())?;
+        // Add imported symbols to the registry
+        for item in imported_items {
+            if let Some(exported_type) = source_interface.exports.types.get(item) {
+                registry.types.insert(item.clone(), exported_type.clone());
+            }
+            if let Some(exported_function) = source_interface.exports.functions.get(item) {
+                registry.functions.insert(item.clone(), exported_function.clone());
+            }
+            if let Some(exported_constant) = source_interface.exports.constants.get(item) {
+                registry.constants.insert(item.clone(), exported_constant.clone());
+            }
+            // Check if item is an enhancement
+            if source_interface.exports.enhancements.contains(item) {
+                registry.enhancements.insert(item.clone());
+            }
+        }
     }
 
     Ok(registry)
 }
 
 /// Phase 3: Type check a single module implementation
-fn compile_module_implementation(program: &Program, _registry: &ResolvedRegistry) -> Result<(), String> {
-    // Convert ResolvedRegistry to the format expected by existing type checker
-    // For now, use the existing single-module type checker
-
-    match check_program(program) {
+fn compile_module_implementation(program: &Program, registry: &ResolvedRegistry) -> Result<(), String> {
+    // Use the new multi-module type checker with imported symbols
+    match check_program_with_imports(program, registry) {
         Ok(()) => Ok(()),
         Err(error) => {
             Err(format!("Type error: {}", error))
