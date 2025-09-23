@@ -50,7 +50,7 @@ pub enum BinaryOp {
     //Join,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Literal {
     Bool(bool),
     Nat(u64),
@@ -276,7 +276,7 @@ pub enum ImportStatement {
 // }
 
 // An expression node in the AST. Children are spanned so we can generate useful runtime errors.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     Error,
     Literal(Literal),

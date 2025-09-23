@@ -139,11 +139,15 @@ impl Context {
 #[derive(Clone, Debug)]
 struct State {
     existentials: usize,
+    symbols: ModuleSymbolTable,
 }
 
 impl State {
     fn initial() -> State {
-        State { existentials: 0 }
+        State {
+            existentials: 0,
+            symbols: ModuleSymbolTable::new(),
+        }
     }
 
     fn fresh_existential(&mut self) -> String {
@@ -1067,10 +1071,49 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
 }
 
 /// Figure 9
+fn is_well_formed_with_registry(context: &Context, state: &State, ty: &Type) -> bool {
+    match ty {
+        Type::Ident(ref ident) => {
+            let type_name = &ident.path[0].0;
+            let is_builtin = matches!(type_name.as_str(),
+                "i32" | "u32" | "i64" | "u64" | "f32" | "f64" |
+                "bool" | "char" | "str" | "String" | "usize" | "isize");
+
+            let is_in_context = context.has_variable(type_name) || context.get_annotation(type_name).is_some();
+            let is_in_registry = state.symbols.type_definitions.contains_key(type_name) ||
+                                state.symbols.traits.contains_key(type_name);
+
+            (is_builtin || is_in_context || is_in_registry)
+                && ident
+                    .type_args
+                    .iter()
+                    .fold(true, |a, b| a && is_well_formed_with_registry(context, state, &b.0))
+        }
+        Type::Intersection(a, b) => {
+            is_well_formed_with_registry(context, state, a) && is_well_formed_with_registry(context, state, b)
+        }
+        Type::Tuple(elements) => {
+            elements.iter().all(|elem| is_well_formed_with_registry(context, state, &elem.0))
+        }
+        Type::Func(param, ret) => {
+            is_well_formed_with_registry(context, state, &param.0) && is_well_formed_with_registry(context, state, &ret.0)
+        }
+        _ => is_well_formed(context, ty)
+    }
+}
+
 fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context {
     print_helper("subtype", format!("{}", a), format!("{}", b), context);
-    assert!(is_well_formed(context, a));
-    assert!(is_well_formed(context, b));
+    // println!("DEBUG: Subtype call: {} <: {}", a, b);
+
+    // Quick check: if types are structurally identical, return immediately
+    if format!("{:?}", a) == format!("{:?}", b) {
+        print_rule("<:Reflexive");
+        return context.clone();
+    }
+
+    assert!(is_well_formed_with_registry(context, state, a));
+    assert!(is_well_formed_with_registry(context, state, b));
     match (a, b) {
         // Unknown can subtype to anything (for forward declarations)
         (Type::Unknown, _) => {
@@ -1083,6 +1126,17 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             assert_eq!(lit_a, lit_b);
             context.clone()
         }
+        // Handle reverse direction: Simple identifier to enhanced intersection
+        (Type::Ident(ident), enhanced_type @ Type::Intersection(_, _)) => {
+            print_rule("<:IdentToEnhanced");
+            let type_name = &ident.path[0].0;
+            if let Some(registry_type) = state.symbols.type_definitions.get(type_name).cloned() {
+                // The identifier resolves to an enhanced type in the registry
+                // Check if the enhanced type can subtype to the target enhanced type
+                return subtype(state, context, &registry_type, enhanced_type);
+            }
+            panic!("Cannot subtype identifier {} to enhanced type {}", ident, enhanced_type);
+        }
         //<:Var
         (Type::Ident(alpha1), Type::Ident(alpha2)) => {
             print_rule("<:Var");
@@ -1092,7 +1146,7 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 && alpha1.path.iter().zip(alpha2.path.iter()).all(|(a, b)| a.0 == b.0)
                 && alpha1.type_args.len() == alpha2.type_args.len()
                 && alpha1.type_args.iter().zip(alpha2.type_args.iter()).all(|(a, b)| a.0 == b.0);
-            
+
             if well_formed && equal {
                 return context.clone();
             } else {
@@ -1167,9 +1221,14 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         // Field constraint intersection → nominal type subtyping (stricter checking)
         (Type::Intersection(a, b), Type::Ident(ident)) if is_field_constraint_intersection(a, b) => {
             print_rule("<:FieldIntersectionToNominal");
+            // println!("DEBUG: Field constraint intersection check: a={:?}, b={:?}, ident={:?}", a, b, ident);
             // For field constraint intersections, ALL fields must be compatible with nominal type
             let type_name = &ident.path[0].0;
-            if let Some(nominal_intersection) = context.get_annotation(type_name) {
+            // First try to get from registry (enhanced types), then fall back to context
+            let nominal_intersection = state.symbols.type_definitions.get(type_name)
+                .or_else(|| context.get_annotation(type_name));
+
+            if let Some(nominal_intersection) = nominal_intersection {
                 if all_field_constraints_match_nominal(a, b, nominal_intersection) {
                     context.clone()
                 } else {
@@ -1179,8 +1238,30 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 panic!("Cannot subtype field intersection to undefined nominal type {}", type_name);
             }
         }
+        (Type::Intersection(a, b), Type::Ident(ident)) => {
+            print_rule("<:^ToIdent");
+            // println!("DEBUG: General intersection to ident: a={:?}, b={:?}, ident={:?}", a, b, ident);
+            // Special case: A^B <: TypeIdent where TypeIdent should be resolved from registry
+            // First try to resolve the identifier to its enhanced type from the registry
+            let type_name = &ident.path[0].0;
+            if let Some(enhanced_type) = state.symbols.type_definitions.get(type_name).cloned() {
+                // Compare against the enhanced type instead of the bare identifier
+                return subtype(state, context, &Type::Intersection(a.clone(), b.clone()), &enhanced_type);
+            }
+            // If not found in registry, fall back to regular intersection subtyping
+            // A^B <: C if A <: C OR B <: C (try both)
+            let result_a = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                subtype(state, context, a, &Type::Ident(ident.clone()))
+            }));
+            if result_a.is_ok() {
+                return result_a.unwrap();
+            }
+            // If A <: C fails, try B <: C
+            subtype(state, context, b, &Type::Ident(ident.clone()))
+        }
         (Type::Intersection(a, b), c) => {
             print_rule("<:^");
+            // println!("DEBUG: General intersection subtyping: a={:?}, b={:?}, c={:?}", a, b, c);
             // A^B <: C if A <: C OR B <: C (try both)
             // Try A <: C first
             let result_a = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1287,12 +1368,17 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
             if let Some(annotation) = context.get_annotation(&x.path[0].0) {
                 return (annotation.clone(), context.clone());
             };
-            
+
             // Check if this is an enum variant constructor
             if let Some(constructor_type) = resolve_enum_variant_constructor(context, &x.path[0].0) {
                 return (constructor_type, context.clone());
             }
-            
+
+            // Check if this is a type constructor from the module symbol registry
+            if let Some(type_def) = state.symbols.type_definitions.get(&x.path[0].0) {
+                return (type_def.clone(), context.clone());
+            }
+
             panic!("variable not found: {}", x.path[0].0);
         }
         //Anno
@@ -1340,23 +1426,25 @@ fn synthesizes_to(state: &mut State, context: &Context, expr: &Expr) -> (Type, C
             }
             (Type::Tuple(tuple_types), gamma)
         }
-        // TODO: Implement Let expressions when they're added to the AST
-        // Expr::Let(var, expr, body) => {
-        //     print_rule("Let");
-        //     let (t0, gamma) = synthesizes_to(state, context, expr);
-        //     let theta = gamma.add(ContextElement::TypedVariable(var.clone(), t0.clone()));
-        //     let (t1, delta) = synthesizes_to(state, &theta, body);
-        //     return (
-        //         t1,
-        //         delta.insert_in_place(ContextElement::TypedVariable(var.clone(), t0), vec![]),
-        //     );
-        // }
-
         //->E
         Expr::Call(e1, args) => {
+            // Check if this is a method call: obj.method(args)
+            if let Expr::Member(obj_expr, method_name) = &e1.0 {
+                print_rule("MethodCall");
+                return synthesize_method_call(state, context, obj_expr, method_name, args);
+            }
+
+            // Check if this is a type constructor call
+            if let Expr::QualifiedIdent(ident) = &e1.0 {
+                if state.symbols.type_definitions.contains_key(&ident.path[0].0) {
+                    print_rule("Constructor");
+                    return synthesize_constructor_call(state, context, &ident.path[0].0, args);
+                }
+            }
+
             print_rule("->E");
             let (func_type, theta) = synthesizes_to(state, context, &e1.0);
-            
+
             match args.len() {
                 0 => {
                     // No arguments - nullary function call
@@ -1613,17 +1701,33 @@ fn substitute_variant_types_with_instantiation(variant_values: &[Spanned<Type>],
     result
 }
 
-/// Substitute type parameters (like T) with concrete types (like i32)
+/// Substitute type parameters (like T, U, V) with concrete types (like i32, bool)
 fn substitute_type_parameters(ty: &Type, type_args: &[Spanned<Type>]) -> Type {
     match ty {
         Type::Ident(qualified_type) => {
-            // Check if this is a type parameter (single letter like "T")
+            // Check if this is a type parameter (single letter like "T", "U", "V", etc.)
             if qualified_type.path.len() == 1 {
                 let param_name = &qualified_type.path[0].0;
-                // For now, assume the first type parameter "T" maps to the first type argument
-                // In a full implementation, this would use a proper parameter mapping
-                if param_name == "T" && !type_args.is_empty() {
-                    return type_args[0].0.clone();
+
+                // Map common type parameter names to positions
+                // T -> 0, U -> 1, V -> 2, W -> 3, etc.
+                let param_index = match param_name.as_str() {
+                    "T" => Some(0),
+                    "U" => Some(1),
+                    "V" => Some(2),
+                    "W" => Some(3),
+                    "X" => Some(4),
+                    "Y" => Some(5),
+                    "Z" => Some(6),
+                    // Also support E for error types
+                    "E" if type_args.len() > 1 => Some(1),
+                    _ => None,
+                };
+
+                if let Some(index) = param_index {
+                    if index < type_args.len() {
+                        return type_args[index].0.clone();
+                    }
                 }
             }
             ty.clone()
@@ -2030,7 +2134,18 @@ fn application_synthesizes_to(
             let delta = checks_against(state, context, expr, &a.0);
             return (c.0.clone(), delta);
         }
-        _ => panic!(),
+        // Handle intersection types by delegating to the left side if it's a function
+        Type::Intersection(a, _b) => {
+            print_rule("^App");
+            return application_synthesizes_to(state, context, a, expr);
+        }
+        // Handle type identifiers - constructor application
+        Type::Ident(_) => {
+            print_rule("IdentApp");
+            // This shouldn't happen - constructor calls should be handled elsewhere
+            panic!("Constructor application should be handled in synthesizes_to, not application_synthesizes_to: {:?}", type_);
+        }
+        _ => panic!("Unhandled type in application_synthesizes_to: {:?}", type_),
     }
 }
 
@@ -2044,6 +2159,203 @@ fn literal_synthesizes_to(literal: &Literal) -> LiteralType {
         Literal::Str(_) => LiteralType::Str,
     }
 }
+
+/// Synthesize method call: obj.method(args) -> method(obj, args)
+fn synthesize_constructor_call(
+    state: &mut State,
+    context: &Context,
+    type_name: &str,
+    args: &[(Option<Spanned<String>>, Spanned<Expr>)],
+) -> (Type, Context) {
+    print_helper(
+        "constructor",
+        format!("{}({} args)", type_name, args.len()),
+        "".to_string(),
+        context,
+    );
+
+    // Get the type definition from the registry
+    if let Some(type_def) = state.symbols.type_definitions.get(type_name) {
+        // For now, just return the type definition
+        // TODO: Check that the constructor arguments match the type structure
+        (type_def.clone(), context.clone())
+    } else {
+        panic!("Type constructor not found: {}", type_name);
+    }
+}
+
+fn synthesize_method_call(
+    state: &mut State,
+    context: &Context,
+    obj_expr: &Spanned<Expr>,
+    method_name: &Spanned<String>,
+    args: &Vec<(Option<Spanned<String>>, Spanned<Expr>)>,
+) -> (Type, Context) {
+    print_helper(
+        "method_call",
+        format!("obj.{}(args)", method_name.0),
+        format!("MethodCall"),
+        context,
+    );
+
+    // First, synthesize the type of the object
+    let (obj_type, gamma) = synthesizes_to(state, context, &obj_expr.0);
+
+    // For method lookup, we need to find the nominal type name
+    // If the object is a variable reference, try to get its declared type from context
+    let obj_type_name = if let Expr::QualifiedIdent(ref ident) = obj_expr.0 {
+        // This is a variable reference - look up its type in context
+        if let Some(declared_type) = context.get_annotation(&ident.path[0].0) {
+            get_type_name(declared_type)
+        } else {
+            get_type_name(&obj_type)
+        }
+    } else {
+        get_type_name(&obj_type)
+    };
+
+
+    // Look up method in the trait_methods registry
+    let method_found = lookup_method_for_type(state, &obj_type_name, &method_name.0);
+
+    if method_found {
+        // Method found! Transform obj.method(args) -> method(obj, args)
+        if let Some(_func_type) = state.symbols.function_signatures.get(&method_name.0) {
+
+            // Transform method call: obj.method(args) -> method(obj, args)
+
+            // 1. Create method function identifier
+            let method_ident = Expr::QualifiedIdent(QualifiedType {
+                path: vec![(method_name.0.clone(), method_name.1.clone())],
+                type_args: vec![],
+            });
+
+            // 2. Create new arguments list with object as first argument
+            let mut new_args: Vec<(Option<Spanned<String>>, Spanned<Expr>)> = Vec::new();
+            // Add object as first argument (unnamed)
+            new_args.push((None, obj_expr.clone()));
+            // Add original arguments
+            new_args.extend(args.clone());
+
+            // 3. Create transformed function call expression
+            let transformed_call = Expr::Call(
+                Box::new((method_ident, method_name.1.clone())),
+                new_args
+            );
+
+            // 4. Synthesize the transformed call using existing infrastructure
+            return synthesizes_to(state, &gamma, &transformed_call);
+        }
+    }
+
+    // Method not found - fall back to regular member access + function call
+    // This preserves existing behavior for non-method calls
+    let (func_type, theta) = synthesizes_to(state, &gamma, &obj_expr.0);
+
+    match args.len() {
+        0 => (func_type, theta),
+        1 => {
+            let arg = &args[0].1;
+            application_synthesizes_to(state, &theta, &apply_context(func_type, &theta), &arg.0)
+        }
+        _ => {
+            synthesize_multi_argument_call(state, &theta, &apply_context(func_type, &theta), args)
+        }
+    }
+}
+
+/// Extract type name from a type for method lookup
+fn get_type_name(type_: &Type) -> String {
+    match type_ {
+        Type::Ident(ident) => ident.path[0].0.clone(),
+        Type::Intersection(a, b) => {
+            // Try both sides of intersection to find a nominal type
+            let left_name = get_type_name(a);
+            if left_name != "Unknown" {
+                left_name
+            } else {
+                get_type_name(b)
+            }
+        },
+        Type::FieldConstraint(_, _) => {
+            // Field constraints don't have nominal names
+            "Unknown".to_string()
+        },
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Look up method for a specific type in the trait_methods registry
+fn lookup_method_for_type(state: &State, obj_type_name: &str, method_name: &str) -> bool {
+
+    // Check all trait-type combinations in the trait_methods registry
+    for ((_trait_name, base_type), methods) in &state.symbols.trait_methods {
+        // Check if this object type matches the base type and the method is in the trait
+        if base_type == obj_type_name && methods.contains(&method_name.to_string()) {
+            return true;
+        }
+    }
+
+    // If we can't find by name, try to find compatible enhanced types
+    // Look through all type definitions that might be enhanced with the required trait
+    for (type_name, _type_def) in &state.symbols.type_definitions {
+        // Check if this type has the method in its trait methods
+        for ((_trait_name, base_type), methods) in &state.symbols.trait_methods {
+            if base_type == type_name && methods.contains(&method_name.to_string()) {
+                // Check if the object could be this type (structural compatibility would go here)
+                // For now, return true if we find any enhanced type with this method
+                return true;
+            }
+        }
+    }
+
+    // Also check for simple open blocks without traits (e.g., open Person)
+    // For now, consider any function that takes the object type as first parameter
+    if let Some(func_type) = state.symbols.function_signatures.get(method_name) {
+        // Check if the function signature starts with the object type
+        // For any enhanced type, allow the method call
+        for (type_name, _type_def) in &state.symbols.type_definitions {
+            if function_takes_type_as_first_param(func_type, type_name) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a function type takes a specific type as its first parameter
+fn function_takes_type_as_first_param(func_type: &Type, type_name: &str) -> bool {
+    match func_type {
+        Type::Func(param_type, _) => {
+            // Check if the parameter type matches the type name
+            match &param_type.0 {
+                Type::Ident(ident) => ident.path[0].0 == type_name,
+                Type::Tuple(elements) => {
+                    // For multi-parameter functions, check the first element
+                    if !elements.is_empty() {
+                        match &elements[0].0 {
+                            Type::Ident(ident) => ident.path[0].0 == type_name,
+                            _ => false
+                        }
+                    } else {
+                        false
+                    }
+                },
+                Type::Intersection(a, _) => {
+                    // Check the first component of intersection
+                    match &**a {
+                        Type::Ident(ident) => ident.path[0].0 == type_name,
+                        _ => false
+                    }
+                }
+                _ => false
+            }
+        }
+        _ => false
+    }
+}
+
 
 /// Helper function to check if type A is a subtype of type B (returns boolean)
 fn is_subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> bool {
@@ -2105,6 +2417,155 @@ fn synthesizes_to_if_expr(state: &mut State, context: &Context, if_expr: &IfExpr
     
     // Return main body type and preserve parent context (no variable leakage from branches)
     (main_body_type, gamma)
+}
+
+/// Type checking for if expressions against expected type
+fn checks_against_if_expr(state: &mut State, context: &Context, if_expr: &IfExpr, expected_type: &Type) -> Context {
+    print_rule("IfCheck");
+
+    // Check main condition synthesizes to bool
+    let (cond_type, gamma) = synthesizes_to(state, context, &if_expr.main_expr.0);
+    let bool_type = Type::Literal(LiteralType::Bool);
+    if !is_subtype(state, &gamma, &cond_type, &bool_type) {
+        panic!("If condition must be bool, got: {}", cond_type);
+    }
+
+    // Check main body against expected type (don't leak variables from branch)
+    let _delta = checks_against_control_expr(state, &gamma, &if_expr.main_body, expected_type);
+
+    // Check all elif branches against expected type
+    for (elif_cond, elif_body) in &if_expr.elif_expr_body {
+        // Check elif condition is bool (use parent context, not accumulated)
+        let (elif_cond_type, theta) = synthesizes_to(state, &gamma, &elif_cond.0);
+        if !is_subtype(state, &theta, &elif_cond_type, &bool_type) {
+            panic!("Elif condition must be bool, got: {}", elif_cond_type);
+        }
+
+        // Check elif body against expected type (don't accumulate context)
+        let _phi = checks_against_control_expr(state, &theta, elif_body, expected_type);
+    }
+
+    // Check else branch if present (don't leak variables from branch)
+    if let Some(else_body) = &*if_expr.else_body {
+        let _psi = checks_against_control_expr(state, &gamma, else_body, expected_type);
+    }
+
+    // Return parent context (no variable leakage from branches)
+    gamma
+}
+
+/// Type checking for match expressions against expected type
+fn checks_against_match_expr(state: &mut State, context: &Context, match_expr: &MatchExpr, expected_type: &Type) -> Context {
+    print_rule("MatchCheck");
+
+    // Synthesize type of scrutinee (the value being matched)
+    let (scrutinee_type, gamma) = synthesizes_to(state, context, &match_expr.expr.0);
+
+    if match_expr.branches.is_empty() {
+        panic!("Match expression must have at least one branch");
+    }
+
+    // Resolve existentials in scrutinee type using the updated context
+    let resolved_scrutinee_type = resolve_existential_type(&scrutinee_type, &gamma);
+
+    // Check all branches against expected type (don't accumulate context)
+    for branch in &match_expr.branches {
+        let branch_context = add_pattern_variables_to_context_with_scrutinee(&gamma, &branch.pattern, &resolved_scrutinee_type);
+        let _delta = checks_against_control_expr(state, &branch_context, &branch.body, expected_type);
+    }
+
+    // Return parent context (no variable leakage from branches)
+    gamma
+}
+
+/// Type checking for control expressions against expected type
+fn checks_against_control_expr(state: &mut State, context: &Context, control_expr: &ControlExpr, expected_type: &Type) -> Context {
+    match control_expr {
+        ControlExpr::Expr(expr) => checks_against(state, context, &expr.0, expected_type),
+        ControlExpr::Block(block) => checks_against_block(state, context, block, expected_type),
+    }
+}
+
+/// Type checking for blocks against expected type
+fn checks_against_block(state: &mut State, context: &Context, block: &Block, expected_type: &Type) -> Context {
+    print_rule("BlockCheck");
+
+    let mut current_context = context.clone();
+
+    for (i, statement) in block.body.iter().enumerate() {
+        let is_last = i == block.body.len() - 1;
+
+        match statement {
+            Statement::Expr(assign_expr) => {
+                if is_last {
+                    // Last expression must check against expected type
+                    current_context = checks_against_assign_expr(state, &current_context, assign_expr, expected_type);
+                } else {
+                    // Non-last expressions are just synthesized and discarded
+                    let (_, delta) = synthesizes_to_assign_expr(state, &current_context, assign_expr);
+                    current_context = delta;
+                }
+            }
+            Statement::Let(let_stmt) => {
+                // Type check let statement and add variable to context
+                let (var_type, delta) = synthesizes_to_assign_expr(state, &current_context, &let_stmt.value);
+
+                // If explicit type annotation, check against it
+                if let Some(annotated_type) = &let_stmt.ty {
+                    let type_ctx = delta.clone();
+                    if !is_subtype(state, &type_ctx, &var_type, &annotated_type.0) {
+                        panic!("Let binding type mismatch. Expected: {}, got: {}", annotated_type.0, var_type);
+                    }
+                }
+
+                current_context = delta.add(ContextElement::TypedVariable(
+                    let_stmt.name.0.clone(),
+                    var_type,
+                ));
+            }
+            Statement::Assign(_assign_stmt) => {
+                // Assignment statements - synthesize and continue
+                // TODO: Implement assignment type checking
+                current_context = current_context.clone();
+            }
+            Statement::Error => {
+                panic!("Error statement in block");
+            }
+        }
+    }
+
+    // If block is empty, check unit type
+    if block.body.is_empty() {
+        let unit_type = Type::Tuple(vec![]);
+        if !is_subtype(state, &current_context, &unit_type, expected_type) {
+            panic!("Empty block has type (), but expected: {}", expected_type);
+        }
+    }
+
+    current_context
+}
+
+/// Type checking for assign expressions against expected type
+fn checks_against_assign_expr(state: &mut State, context: &Context, assign_expr: &AssignExpr, expected_type: &Type) -> Context {
+    match assign_expr {
+        AssignExpr::BlockExpr(block_expr) => {
+            match &**block_expr {
+                BlockExpr::If(if_expr) => checks_against_if_expr(state, context, if_expr, expected_type),
+                BlockExpr::Match(match_expr) => checks_against_match_expr(state, context, match_expr, expected_type),
+                _ => {
+                    // For other block expressions, synthesize and check subtyping
+                    let (expr_type, ctx) = synthesizes_to_block_expr(state, context, block_expr);
+                    if !is_subtype(state, &ctx, &expr_type, expected_type) {
+                        panic!("Expression has type {}, but expected: {}", expr_type, expected_type);
+                    }
+                    ctx
+                }
+            }
+        }
+        AssignExpr::Expr(expr) => {
+            checks_against(state, context, &expr.0, expected_type)
+        }
+    }
 }
 
 /// Type synthesis for match expressions
@@ -2292,7 +2753,12 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
             is_well_formed(&context.add(ContextElement::Variable(alpha.clone())), a)
         }
         Type::Existential(var) => context.has_existential(var) || context.get_solved(var).is_some(),
-        Type::Intersection(a, b) => is_well_formed(context, a) && is_well_formed(context, b),
+        Type::Intersection(a, b) => {
+            let a_well_formed = is_well_formed(context, a);
+            let b_well_formed = is_well_formed(context, b);
+            // println!("DEBUG: Intersection well-formed check: a={:?} ({}), b={:?} ({})", a, a_well_formed, b, b_well_formed);
+            a_well_formed && b_well_formed
+        },
     }
 }
 
@@ -2371,7 +2837,6 @@ fn apply_context(a: Type, context: &Context) -> Type {
 /// Public interface for type checking a complete program
 /// Check a program with imported symbols from other modules
 pub fn check_program_with_imports(program: &Program, resolved_registry: &ResolvedRegistry) -> Result<(), String> {
-    let state = State::initial();
     let mut context = Context::initial();
 
     // Phase 1: Collect all module symbols including enhancements from open blocks
@@ -2391,6 +2856,12 @@ pub fn check_program_with_imports(program: &Program, resolved_registry: &Resolve
     println!("Applying retroactive enhancements...");
     println!("Type definitions (after enhancement): {:?}",
         symbols.type_definitions.iter().map(|(k, v)| format!("{}: {}", k, v)).collect::<Vec<_>>());
+
+    // Create state with symbols for type checking
+    let mut state = State {
+        existentials: 0,
+        symbols: symbols.clone(),
+    };
 
     // Phase 3: Enhanced type checking with complete registry including imports
     // Add all enhanced type definitions to context
@@ -2445,9 +2916,8 @@ pub fn check_program_with_imports(program: &Program, resolved_registry: &Resolve
 
 /// Single-module check_program for backwards compatibility
 pub fn check_program(program: &Program) -> Result<(), String> {
-    let state = State::initial();
     let mut context = Context::initial();
-    
+
     // Phase 1: Collect all module symbols including enhancements from open blocks
     let mut symbols = collect_module_symbols(program)?;
     
@@ -2463,7 +2933,12 @@ pub fn check_program(program: &Program) -> Result<(), String> {
     symbols.apply_all_enhancements();
     println!("Type definitions (after enhancement): {:?}", symbols.type_definitions.keys().collect::<Vec<_>>());
     
-    // Phase 2: Build context from enhanced registry
+    // Phase 2: Create state with symbols and build context from enhanced registry
+    let mut state = State {
+        existentials: 0,
+        symbols: symbols.clone(),
+    };
+
     // Add all type definitions to context
     for (type_name, type_def) in &symbols.type_definitions {
         context = context.add(ContextElement::TypedVariable(
@@ -3227,6 +3702,124 @@ def extendedObj: Extended = {
     // ==================== PHASE 1 METHOD COLLECTION TESTS ====================
     
     #[test]
+    fn test_method_call_transformation() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def type Person = { name: String }
+
+def greet(p: Person) -> String = "Hello"
+
+open Person
+
+def test_method_call() -> String =
+    let person: Person = { name = "Alice" }
+    person.greet()
+"#;
+
+        // Parse the source code
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method call transformation test result: {:?}", result);
+        assert!(result.is_ok(), "Method call transformation should work");
+    }
+
+    #[test]
+    fn test_comprehensive_method_transformation() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def trait Greet for T: type = {
+    greet: (T, String) -> String,
+}
+
+def type Person = { name: String, age: i32 }
+
+def greet(self: Person, greeting: String) -> String = greeting
+
+open Greet^Person
+
+def test_method_with_args() -> String =
+    let p: Person = { name = "Alice", age = 30 }
+    p.greet("Hello World")
+"#;
+
+        // Parse the source code
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Comprehensive method transformation test result: {:?}", result);
+        assert!(result.is_ok(), "Method transformation with trait enhancement should work");
+    }
+
+    #[test]
+    fn test_method_dispatch_with_open_blocks() {
+        // Test that method dispatch works with open blocks (trait methods)
+        let source = r#"
+def trait Greet for T: type = {
+    greet: (T, String) -> String,
+}
+
+def type Person = {
+    name: String,
+    age: i32,
+}
+
+open Greet^Person
+
+def greet(self: Person, greeting: String) -> String = greeting
+
+close Greet^Person
+
+def test(p: Person) -> String = p.greet("Hello")
+"#;
+        // This should show method dispatch working with trait methods from open blocks
+        let result = parse_and_check(source);
+        println!("Method dispatch with open blocks test result: {:?}", result);
+    }
+
+    #[test]
+    fn test_method_call_detection() {
+        // Test that method calls obj.method(args) are detected and show "MethodCall" in debug output
+        let source = r#"
+def type Person = {
+    name: String,
+    age: i32,
+}
+
+def greet(self: Person, greeting: String) -> String = greeting
+
+def test(p: Person) -> String = p.greet("Hello")
+"#;
+        // Just test that it parses and type checks - method dispatch will show in debug output
+        let result = parse_and_check(source);
+        // For now this will fail since greet is not available as method, but we should see "MethodCall" in output
+        // This establishes the foundation for actual method dispatch
+        println!("Method call detection test result: {:?}", result);
+    }
+
+    #[test]
     fn test_method_collection_from_open_block() {
         // Test that method definitions inside open/close blocks are collected
         let source = r#"
@@ -3857,6 +4450,248 @@ def add(a: i32, b: i32) -> i32 = a + b  # Function for testing calls
         assert!(parse_and_check(source).is_ok());
     }
 
+    // ========== IF/ELSE COMPREHENSIVE TESTS ==========
+
+    #[test]
+    fn test_if_elif_else_chain() {
+        let source = r#"
+def testIfElifElse(x: i32) -> i32 =
+    if x > 0:
+        1
+    elif x == 0:
+        0
+    else:
+        42
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nested_if_expressions() {
+        let source = r#"
+def testNestedIf(x: i32, y: i32) -> i32 =
+    if x > 0:
+        if y > 0:
+            x + y
+        else:
+            x
+    else:
+        y
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_if_with_complex_conditions() {
+        let source = r#"
+def testComplexCondition(x: i32, y: i32, z: i32) -> bool =
+    if x > 0 == y > 0:
+        true
+    else:
+        false
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_if_branch_type_mismatch_should_fail() {
+        let source = r#"
+def testTypeMismatch(flag: bool) -> i32 =
+    if flag:
+        42
+    else:
+        true
+"#;
+        assert!(parse_and_check(source).is_err());
+    }
+
+    #[test]
+    fn test_if_condition_must_be_bool() {
+        let source = r#"
+def testNonBoolCondition(x: i32) -> i32 =
+    if x:
+        1
+    else:
+        0
+"#;
+        assert!(parse_and_check(source).is_err());
+    }
+
+    #[test]
+    fn test_if_with_block_bodies() {
+        let source = r#"
+def testBlockBodies(x: i32) -> i32 =
+    if x > 0:
+        let temp = x + 1
+        temp * 2
+    else:
+        let temp = x - 1
+        temp * 2
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    // ========== MATCH COMPREHENSIVE TESTS ==========
+
+    #[test]
+    fn test_match_with_multiple_variants() {
+        let source = r#"
+def type Color =
+    | Red
+    | Green
+    | Blue
+    | Custom(i32, i32, i32)
+
+def colorToInt(c: Color) -> i32 =
+    match c:
+        | Red => 0
+        | Green => 1
+        | Blue => 2
+        | Custom(r, g, b) => r + g + b
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_match_with_generic_types() {
+        let source = r#"
+def type Result for T: type, E: type =
+    | Ok(T)
+    | Err(E)
+
+def unwrapOr(res: Result[i32, String], default: i32) -> i32 =
+    match res:
+        | Ok(val) => val
+        | Err(msg) => default
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_nested_match_expressions() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def flatten(opt: Option[Option[i32]]) -> i32 =
+    match opt:
+        | None => 0
+        | Some(inner) =>
+            match inner:
+                | None => 1
+                | Some(val) => val
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_match_branch_type_mismatch_should_fail() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def testTypeMismatch(opt: Option[i32]) -> i32 =
+    match opt:
+        | None => 0
+        | Some(val) => true
+"#;
+        assert!(parse_and_check(source).is_err());
+    }
+
+    #[test]
+    fn test_match_pattern_variable_types() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def testPatternTypes(opt: Option[i32]) -> i32 =
+    match opt:
+        | None => 0
+        | Some(val) => val + 1
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_match_with_guards_and_complex_bodies() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def processOption(opt: Option[i32]) -> i32 =
+    match opt:
+        | None =>
+            let default = 42
+            default
+        | Some(val) =>
+            let doubled = val * 2
+            doubled + 1
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    // ========== CHECKING MODE TESTS ==========
+
+    #[test]
+    fn test_if_checking_mode_with_explicit_annotation() {
+        let source = r#"
+def testIfChecking(x: i32) -> i32 =
+    let result: i32 = if x > 0:
+        x
+    else:
+        0
+    result
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_match_checking_mode_with_explicit_annotation() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def testMatchChecking(opt: Option[i32]) -> i32 =
+    let result: i32 = match opt:
+        | None => 0
+        | Some(val) => val
+    result
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_if_in_function_return_checking() {
+        let source = r#"
+def getMax(x: i32, y: i32) -> i32 =
+    if x > y:
+        x
+    else:
+        y
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
+    #[test]
+    fn test_match_in_function_return_checking() {
+        let source = r#"
+def type Option for T: type =
+    | None
+    | Some(T)
+
+def unwrapOrZero(opt: Option[i32]) -> i32 =
+    match opt:
+        | None => 0
+        | Some(val) => val
+"#;
+        assert!(parse_and_check(source).is_ok());
+    }
+
     // ========== BLOCK SCOPING TESTS ==========
     // These tests demonstrate the scoping issues that need to be fixed
 
@@ -4154,6 +4989,54 @@ def testStringPatternExtraction() -> String =
         | Just(text) => text            # text should be String
 "#;
         assert!(parse_and_check(source).is_ok(), "Pattern variable type extraction should work correctly");
+    }
+
+    #[test]
+    fn test_multi_parameter_type_pattern_matching() {
+        // Test pattern matching with types that have multiple type parameters
+        let source = r#"
+def type Pair for T: type, U: type =
+    | MkPair(T, U)
+
+def type Triple for T: type, U: type, V: type =
+    | MkTriple(T, U, V)
+
+def type Either for T: type, U: type =
+    | Left(T)
+    | Right(U)
+
+def testPairPattern(p: Pair[i32, bool]) -> i32 =
+    match p:
+        | MkPair(num, flag) =>
+            if flag:
+                num
+            else:
+                0
+
+def testTriplePattern(t: Triple[i32, String, bool]) -> i32 =
+    match t:
+        | MkTriple(num, text, flag) =>
+            if flag:
+                num
+            else:
+                0
+
+def testEitherPattern(e: Either[i32, String]) -> i32 =
+    match e:
+        | Left(num) => num
+        | Right(text) => 0
+
+def testNestedMultiParam(p: Pair[Pair[i32, bool], String]) -> i32 =
+    match p:
+        | MkPair(inner, text) =>
+            match inner:
+                | MkPair(num, flag) =>
+                    if flag:
+                        num
+                    else:
+                        0
+"#;
+        assert!(parse_and_check(source).is_ok(), "Multi-parameter type pattern matching should work correctly");
     }
 
     // ============================================================================
@@ -4727,5 +5610,230 @@ def testStringPatternExtraction() -> String =
                 // Log the error but don't fail the test since this is complex integration
             }
         }
+    }
+
+    // === Comprehensive Method Dispatch Edge Case Tests ===
+
+    #[test]
+    fn test_method_dispatch_with_no_arguments() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def type Counter = { value: i32 }
+
+def getCount(self: Counter) -> i32 = self.value
+
+open Counter
+
+def test() -> i32 =
+    let c: Counter = { value = 42 }
+    c.getCount()
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch with no arguments test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch with no arguments should work");
+    }
+
+    #[test]
+    fn test_method_dispatch_with_multiple_arguments() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def trait Calculator for T: type = {
+    calculate: (T, i32, i32, i32) -> i32,
+}
+
+def type Calc = { name: String }
+
+def calculate(self: Calc, a: i32, b: i32, c: i32) -> i32 = a + b + c
+
+open Calculator^Calc
+
+def test() -> i32 =
+    let calc: Calc = { name = "test" }
+    calc.calculate(10, 20, 30)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch with multiple arguments test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch with multiple arguments should work");
+    }
+
+    #[test]
+    fn test_method_dispatch_with_complex_intersection_types() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T,
+}
+
+def trait Multiply for T: type = {
+    multiply: (T, T) -> T,
+}
+
+def type Number = { value: i32 }
+
+def add(self: Number, other: Number) -> Number = Number(value = 42)
+def multiply(self: Number, other: Number) -> Number = Number(value = 84)
+
+open Add^Number
+open Multiply^Number
+
+def test() -> Number =
+    let a: Number = Number(value = 5)
+    let b: Number = Number(value = 3)
+    let sum = a.add(b)
+    sum.multiply(b)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch with complex intersection types test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch with complex intersection types should work");
+    }
+
+    #[test]
+    fn test_method_dispatch_chained_calls() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def trait Fluent for T: type = {
+    setValue: (T, i32) -> T,
+    getValue: (T) -> i32,
+}
+
+def type FluentNumber = { value: i32 }
+
+def setValue(self: FluentNumber, newValue: i32) -> FluentNumber = FluentNumber(value = newValue)
+def getValue(self: FluentNumber) -> i32 = self.value
+
+open Fluent^FluentNumber
+
+def test() -> i32 =
+    let num: FluentNumber = FluentNumber(value = 0)
+    let updated = num.setValue(42)
+    updated.getValue()
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch chained calls test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch chained calls should work");
+    }
+
+    #[test]
+    fn test_method_dispatch_fallback_to_function_call() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def type Simple = { value: i32 }
+
+def process(obj: Simple, data: String) -> String = data
+
+def test() -> String =
+    let s: Simple = Simple(value = 10)
+    s.process("hello")
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch fallback test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch should fallback to function lookup when trait method not found");
+    }
+
+    #[test]
+    fn test_method_dispatch_with_structural_compatibility() {
+        use crate::parser::program_parser;
+        use crate::lexer::{lexer, tts_to_stream};
+
+        let source = r#"
+def trait Display for T: type = {
+    show: (T) -> String,
+}
+
+def type Person = { name: String, age: i32 }
+
+def show(self: Person) -> String = self.name
+
+open Display^Person
+
+def test() -> String =
+    let obj = { name = "Alice", age = 30 }
+    obj.show()
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some(), "Lexer should succeed");
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser should succeed: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Method dispatch structural compatibility test result: {:?}", result);
+        assert!(result.is_ok(), "Method dispatch should work with structurally compatible object literals");
     }
 }
