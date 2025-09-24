@@ -13,6 +13,7 @@ enum ContextElement {
     Solved(String, Type),
     Marker(String),
     TypedVariable(String, Type),
+    Annotation(String, Type),  // Type variable annotation for constraints
 }
 
 impl fmt::Display for ContextElement {
@@ -23,6 +24,7 @@ impl fmt::Display for ContextElement {
             ContextElement::Solved(a, ty) => write!(f, "{}^: {}", a, ty),
             ContextElement::Marker(a) => write!(f, "<|{}", a),
             ContextElement::TypedVariable(x, ty) => write!(f, "{}: {}", x, ty),
+            ContextElement::Annotation(x, ty) => write!(f, "{}: {} (constraint)", x, ty),
         }
     }
 }
@@ -82,7 +84,7 @@ impl Context {
             let _ = eles.splice(index..=index, inserts).count();
             return Context { elements: eles };
         }
-        panic!();
+        panic!("Cannot insert in place - element {:?} not found in context {:?}", element, self);
     }
 
     fn drop(&self, element: ContextElement) -> Self {
@@ -130,6 +132,17 @@ impl Context {
 
     fn add_annotation(&mut self, x: String, type_: Type) {
         self.elements.push(ContextElement::TypedVariable(x, type_));
+    }
+
+    fn get_constraint_annotation(&self, x: &str) -> Option<Type> {
+        for ele in &self.elements {
+            if let ContextElement::Annotation(var, constraint) = ele {
+                if var == x {
+                    return Some(constraint.clone());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -697,7 +710,7 @@ fn collect_module_symbols(program: &Program) -> Result<ModuleSymbolTable, String
                 }
                 
                 // Build function type signature for ALL functions
-                let func_type = if func.args.is_empty() {
+                let base_func_type = if func.args.is_empty() {
                     func.rtn.0.clone()
                 } else if func.args.len() == 1 {
                     Type::Func(
@@ -713,7 +726,29 @@ fn collect_module_symbols(program: &Program) -> Result<ModuleSymbolTable, String
                         Box::new(func.rtn.clone()),
                     )
                 };
-                
+
+                // Wrap in Quantification types if there are generic parameters
+                let func_type = if let Some(generics) = &func.generics {
+                    // Wrap in quantifications from right to left (innermost to outermost)
+                    let mut result = base_func_type;
+                    for generic_param in generics.args.iter().rev() {
+                        // Check if the generic parameter has a constraint (not "type")
+                        let constraint = if let Type::UniverseType = generic_param.ty.0 {
+                            None  // "for T: type" means no constraint
+                        } else {
+                            Some(Box::new(generic_param.ty.0.clone()))  // "for T: Trait" means T constrained by Trait
+                        };
+                        result = Type::Quantification(
+                            generic_param.name.clone(),
+                            constraint,
+                            Box::new(result)
+                        );
+                    }
+                    result
+                } else {
+                    base_func_type
+                };
+
                 // Add ALL function signatures to registry
                 symbols.add_function_signature(func_name.clone(), func_type);
             }
@@ -830,7 +865,7 @@ fn checks_against(state: &mut State, context: &Context, expr: &Expr, type_: &Typ
         //     checks_against(state, &gamma, e, b).drop(typed_var)
         // }
         //forallI
-        (_, Type::Quantification(alpha, a)) => {
+        (_, Type::Quantification(alpha, _constraint, a)) => {
             print_rule("∀I");
             let var = ContextElement::Variable(alpha.clone());
             let gamma = context.add(var.clone());
@@ -906,7 +941,7 @@ fn occurs_in(alpha: &str, a: &Type) -> bool {
         Type::Literal(_) => false,
         Type::Ident(var) => alpha == var.path[0].0,
         Type::Func(t1, t2) => occurs_in(alpha, &t1.0) || occurs_in(alpha, &t2.0),
-        Type::Quantification(beta, t) => {
+        Type::Quantification(beta, _constraint, t) => {
             if alpha == beta {
                 return true;
             } else {
@@ -934,7 +969,12 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
     match b {
         Type::Existential(beta) if context.has_existential(beta) => {
             // InstLReach: both are existentials, pick the leftmost one
-            if let Some(alpha_pos) = context.elements.iter().position(|e| 
+            // First check if alpha is already solved - if so, use subtype with its solution
+            if let Some(solved_alpha) = context.get_solved(alpha) {
+                return subtype(state, context, &solved_alpha, b);
+            }
+
+            if let Some(alpha_pos) = context.elements.iter().position(|e|
                 matches!(e, ContextElement::Existential(name) if name == alpha)
             ) {
                 if let Some(beta_pos) = context.elements.iter().position(|e|
@@ -957,7 +997,7 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
                     panic!("Beta existential not found in context")
                 }
             } else {
-                panic!("Alpha existential not found in context")
+                panic!("Alpha existential {} not found in context", alpha)
             }
         }
         Type::Func(a, c) => {
@@ -979,7 +1019,7 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
             let theta = instantiate_r(state, &gamma, &a.0, &alpha1);
             subtype(state, &theta, &Type::Existential(alpha2), &c.0)
         }
-        Type::Quantification(beta, c) => {
+        Type::Quantification(beta, _constraint, c) => {
             // InstLAllR: α^ :≤ ∀β.C becomes α^ :≤ [β^/β]C
             let beta_hat = state.fresh_existential();
             let gamma = context.add(ContextElement::Existential(beta_hat.clone()));
@@ -989,7 +1029,24 @@ fn instantiate_l(state: &mut State, context: &Context, alpha: &str, b: &Type) ->
         _ => {
             // InstLSolve: solve α^ := B if α^ ∉ FV(B)
             if !occurs_in(alpha, b) {
-                context.insert_in_place(
+                // Check if existential is already solved (can happen after constraint checking)
+                if context.get_solved(alpha).is_some() {
+                    return context.clone();
+                }
+
+                // Check if there's a constraint annotation for this existential
+                let mut final_context = context.clone();
+                if let Some(constraint) = context.get_constraint_annotation(alpha) {
+                    // Verify that B satisfies the constraint
+                    final_context = subtype(state, &final_context, b, &constraint);
+                }
+
+                // Check again if it was solved during constraint checking
+                if final_context.get_solved(alpha).is_some() {
+                    return final_context;
+                }
+
+                final_context.insert_in_place(
                     ContextElement::Existential(alpha.to_string()),
                     vec![ContextElement::Solved(alpha.to_string(), b.clone())]
                 )
@@ -1050,7 +1107,7 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
             let theta = instantiate_l(state, &gamma, &alpha1, &a_arg.0);
             subtype(state, &theta, &a_ret.0, &Type::Existential(alpha2))
         }
-        Type::Quantification(beta, c) => {
+        Type::Quantification(beta, _constraint, c) => {
             // InstRAllL: ∀β.C :≤ α^ becomes [β/β]C :≤ α^ where β is fresh
             let gamma = context.add(ContextElement::Variable(beta.clone()));
             let result = instantiate_r(state, &gamma, c, alpha);
@@ -1059,7 +1116,24 @@ fn instantiate_r(state: &mut State, context: &Context, a: &Type, alpha: &str) ->
         _ => {
             // InstRSolve: solve α^ := A if α^ ∉ FV(A)
             if !occurs_in(alpha, a) {
-                context.insert_in_place(
+                // Check if existential is already solved (can happen after constraint checking)
+                if context.get_solved(alpha).is_some() {
+                    return context.clone();
+                }
+
+                // Check if there's a constraint annotation for this existential
+                let mut final_context = context.clone();
+                if let Some(constraint) = context.get_constraint_annotation(alpha) {
+                    // Verify that A satisfies the constraint
+                    final_context = subtype(state, &final_context, a, &constraint);
+                }
+
+                // Check again if it was solved during constraint checking
+                if final_context.get_solved(alpha).is_some() {
+                    return final_context;
+                }
+
+                final_context.insert_in_place(
                     ContextElement::Existential(alpha.to_string()),
                     vec![ContextElement::Solved(alpha.to_string(), a.clone())]
                 )
@@ -1140,7 +1214,7 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         //<:Var
         (Type::Ident(alpha1), Type::Ident(alpha2)) => {
             print_rule("<:Var");
-            let well_formed = is_well_formed(context, a);
+            let well_formed = is_well_formed_with_registry(context, state, a);
             // Compare types semantically, ignoring span information
             let equal = alpha1.path.len() == alpha2.path.len()
                 && alpha1.path.iter().zip(alpha2.path.iter()).all(|(a, b)| a.0 == b.0)
@@ -1149,9 +1223,56 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
 
             if well_formed && equal {
                 return context.clone();
-            } else {
-                panic!("Cannot subtype {} <: {}", alpha1, alpha2);
             }
+
+            // Check if alpha1 is a type variable with a constraint annotation
+            // If T has constraint C, then T <: X is valid if X <: C (contravariant)
+            let type_var_name = &alpha1.path[0].0;
+            if let Some(constraint) = context.get_constraint_annotation(type_var_name) {
+                print_rule("<:VarConstraint");
+                // Check if the target type satisfies the constraint
+                // First try to get enhanced version from registry
+                let target_type_name = &alpha2.path[0].0;
+                let target_type = if let Some(enhanced_type) = state.symbols.type_definitions.get(target_type_name) {
+                    enhanced_type.clone()
+                } else {
+                    // For builtin types, check if they have been enhanced via trait_methods
+                    // Check if constraint is a single trait and if target_type implements it
+                    if let Type::Ident(constraint_ident) = &constraint {
+                        let constraint_name = &constraint_ident.path[0].0;
+                        // Check if (constraint_trait, target_type) exists in trait_methods
+                        if state.symbols.trait_methods.contains_key(&(constraint_name.clone(), target_type_name.clone())) {
+                            // Builtin type has this trait - constraint satisfied
+                            return context.clone();
+                        }
+                    }
+                    Type::Ident(alpha2.clone())
+                };
+                return subtype(state, context, &target_type, &constraint);
+            }
+
+            // Check if alpha2 is a type variable with a constraint annotation
+            // If X has constraint C and T doesn't, then T <: X requires T <: C
+            let target_type_var = &alpha2.path[0].0;
+            if let Some(constraint) = context.get_constraint_annotation(target_type_var) {
+                print_rule("<:VarToConstrainedVar");
+                // Check if the source type satisfies the constraint
+                let source_type = Type::Ident(alpha1.clone());
+                return subtype(state, context, &source_type, &constraint);
+            }
+
+            // Check if alpha2 is a trait and alpha1 implements it
+            let type1_name = &alpha1.path[0].0;
+            let type2_name = &alpha2.path[0].0;
+            if state.symbols.traits.contains_key(type2_name) {
+                // Check if (trait, type) exists in trait_methods registry
+                if state.symbols.trait_methods.contains_key(&(type2_name.clone(), type1_name.clone())) {
+                    print_rule("<:TypeToTrait");
+                    return context.clone();
+                }
+            }
+
+            panic!("Cannot subtype {} <: {}", alpha1, alpha2);
         }
         //<:Exvar
         (Type::Existential(exist1), Type::Existential(exist2)) if exist1 == exist2 => {
@@ -1182,20 +1303,35 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             gamma
         }
         //<:forallL
-        (Type::Quantification(alpha, a), _) => {
+        (Type::Quantification(alpha, constraint, a), _) => {
             print_rule("<:∀L");
             let r1 = state.fresh_existential();
-            let gamma = context
+            let mut gamma = context
                 .add(ContextElement::Marker(r1.clone()))
                 .add(ContextElement::Existential(r1.clone()));
+
+            // Check constraint if present
+            if let Some(c) = constraint {
+                // Verify existential satisfies constraint: r1 <: constraint
+                gamma = subtype(state, &gamma, &Type::Existential(r1.clone()), c);
+            }
+
             let substituted_a = substitution(a, alpha, &Type::Existential(r1.clone()));
             let delta = subtype(state, &gamma, &substituted_a, b);
             return delta.drop(ContextElement::Marker(r1.clone()));
         }
         //<:forallR
-        (_, Type::Quantification(alpha, b)) => {
+        (_, Type::Quantification(alpha, constraint, b)) => {
             print_rule("<:∀R");
-            let theta = context.add(ContextElement::Variable(alpha.clone()));
+            let mut theta = context.add(ContextElement::Variable(alpha.clone()));
+
+            // Check constraint if present: add constraint to context
+            if let Some(c) = constraint {
+                // Add constraint annotation for the type variable
+                // The variable alpha must satisfy constraint c
+                theta = theta.add(ContextElement::Annotation(alpha.clone(), c.as_ref().clone()));
+            }
+
             let delta = subtype(state, &theta, a, b);
             return delta.drop(ContextElement::Variable(alpha.clone()));
         }
@@ -1241,6 +1377,23 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
         (Type::Intersection(a, b), Type::Ident(ident)) => {
             print_rule("<:^ToIdent");
             // println!("DEBUG: General intersection to ident: a={:?}, b={:?}, ident={:?}", a, b, ident);
+
+            // Check if b is exactly the target ident (for A^B <: B case, common with traits)
+            if let Type::Ident(b_ident) = &**b {
+                if b_ident.path[0].0 == ident.path[0].0 {
+                    print_rule("<:^Refl");
+                    return context.clone();
+                }
+            }
+
+            // Check if a is exactly the target ident
+            if let Type::Ident(a_ident) = &**a {
+                if a_ident.path[0].0 == ident.path[0].0 {
+                    print_rule("<:^Refl");
+                    return context.clone();
+                }
+            }
+
             // Special case: A^B <: TypeIdent where TypeIdent should be resolved from registry
             // First try to resolve the identifier to its enhanced type from the registry
             let type_name = &ident.path[0].0;
@@ -1248,6 +1401,7 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 // Compare against the enhanced type instead of the bare identifier
                 return subtype(state, context, &Type::Intersection(a.clone(), b.clone()), &enhanced_type);
             }
+
             // If not found in registry, fall back to regular intersection subtyping
             // A^B <: C if A <: C OR B <: C (try both)
             let result_a = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1258,6 +1412,13 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
             }
             // If A <: C fails, try B <: C
             subtype(state, context, b, &Type::Ident(ident.clone()))
+        }
+        // A^B <: C^D requires A^B <: C AND A^B <: D
+        (a_inter @ Type::Intersection(_, _), Type::Intersection(c, d)) => {
+            print_rule("<:^To^");
+            // Must satisfy BOTH parts of the right intersection
+            let gamma = subtype(state, context, a_inter, c);
+            subtype(state, &gamma, a_inter, d)
         }
         (Type::Intersection(a, b), c) => {
             print_rule("<:^");
@@ -1280,6 +1441,17 @@ fn subtype(state: &mut State, context: &Context, a: &Type, b: &Type) -> Context 
                 print_rule("<:NatToInt");
                 context.clone()
             } else {
+                // Check if type_name is a trait and if Nat can subtype to a type that implements it
+                // Nat can subtype to integer types, so check if any integer type implements this trait
+                if state.symbols.traits.contains_key(type_name) {
+                    let nat_compatible_types = ["i32", "u32", "i64", "u64", "usize"];
+                    for int_type in nat_compatible_types {
+                        if state.symbols.trait_methods.contains_key(&(type_name.clone(), int_type.to_string())) {
+                            print_rule("<:NatToTrait");
+                            return context.clone();
+                        }
+                    }
+                }
                 panic!("Cannot subtype Nat to {}", type_name);
             }
         }
@@ -1808,7 +1980,7 @@ fn resolve_enum_variant_constructor(context: &Context, variant_name: &str) -> Op
                                     Box::new((param_type, Span::default())),
                                     Box::new((quantified_return_type, Span::default())),
                                 );
-                                return Some(Type::Quantification(type_var, Box::new(function_type)));
+                                return Some(Type::Quantification(type_var, None, Box::new(function_type)));
                             } else {
                                 // Non-generic constructor
                                 return Some(Type::Func(
@@ -1977,23 +2149,37 @@ fn synthesize_multi_argument_call(
     
     // Match against function type to get expected argument tuple and return type
     match func_type {
+        Type::Quantification(alpha, constraint, body) => {
+            // Instantiate quantified type with fresh existential
+            print_rule("∀AppMulti");
+            let alpha1 = state.fresh_existential();
+            let mut gamma = context.add(ContextElement::Existential(alpha1.clone()));
+
+            // Add constraint annotation if present (for later checking)
+            if let Some(c) = constraint {
+                gamma = gamma.add(ContextElement::Annotation(alpha1.clone(), c.as_ref().clone()));
+            }
+
+            let substituted_body = substitution(body, alpha, &Type::Existential(alpha1));
+            return synthesize_multi_argument_call(state, &gamma, &substituted_body, args);
+        }
         Type::Func(arg_type, ret_type) => {
             // Synthesize each argument
             let mut gamma = context.clone();
             let mut arg_types = Vec::new();
-            
+
             for (_, arg_expr) in args {
                 let (arg_type, new_gamma) = synthesizes_to(state, &gamma, &arg_expr.0);
                 arg_types.push((arg_type, arg_expr.1.clone()));
                 gamma = new_gamma;
             }
-            
+
             // Create tuple type from synthesized arguments
             let actual_arg_tuple = Type::Tuple(arg_types);
-            
+
             // Check if our tuple is compatible with the function's expected argument type
             let final_gamma = subtype(state, &gamma, &actual_arg_tuple, &arg_type.0);
-            
+
             (ret_type.0.clone(), final_gamma)
         }
         _ => {
@@ -2024,11 +2210,12 @@ fn substitution(a: &Type, alpha: &str, b: &Type) -> Type {
                 })
             }
         }
-        Type::Quantification(var, type_) => {
+        Type::Quantification(var, constraint, type_) => {
             if var == alpha {
-                Type::Quantification(var.clone(), Box::new(b.clone()))
+                Type::Quantification(var.clone(), constraint.clone(), Box::new(b.clone()))
             } else {
-                Type::Quantification(var.clone(), Box::new(substitution(type_, alpha, b)))
+                let new_constraint = constraint.as_ref().map(|c| Box::new(substitution(c, alpha, b)));
+                Type::Quantification(var.clone(), new_constraint, Box::new(substitution(type_, alpha, b)))
             }
         }
         Type::Existential(var) => {
@@ -2121,10 +2308,16 @@ fn application_synthesizes_to(
             return (Type::Existential(alpha2.clone()), delta);
         }
         //ForallApp
-        Type::Quantification(alpha, a) => {
+        Type::Quantification(alpha, constraint, a) => {
             print_rule("∀App");
             let alpha1 = state.fresh_existential();
-            let gamma = context.add(ContextElement::Existential(alpha1.clone()));
+            let mut gamma = context.add(ContextElement::Existential(alpha1.clone()));
+
+            // Add constraint annotation if present (for later checking)
+            if let Some(c) = constraint {
+                gamma = gamma.add(ContextElement::Annotation(alpha1.clone(), c.as_ref().clone()));
+            }
+
             let substituted_a = substitution(a, alpha, &Type::Existential(alpha1));
             return application_synthesizes_to(state, &gamma, &substituted_a, expr);
         }
@@ -2214,9 +2407,30 @@ fn synthesize_method_call(
         get_type_name(&obj_type)
     };
 
+    // Check if obj_type is a type variable with a constraint
+    let constraint_type_name = if let Type::Ident(ref ident) = obj_type {
+        let var_name = &ident.path[0].0;
+        // Check if this is a type variable in context
+        if context.elements.iter().any(|ele| matches!(ele, ContextElement::Variable(v) if v == var_name)) {
+            // It's a type variable - check for constraint
+            if let Some(constraint) = context.get_constraint_annotation(var_name) {
+                Some(get_type_name(&constraint))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // Look up method in the trait_methods registry
-    let method_found = lookup_method_for_type(state, &obj_type_name, &method_name.0);
+    // First try the actual type, then try constraint if available
+    let method_found = lookup_method_for_type(state, &obj_type_name, &method_name.0) ||
+        constraint_type_name.as_ref().map_or(false, |constraint_name| {
+            lookup_method_for_type(state, constraint_name, &method_name.0)
+        });
 
     if method_found {
         // Method found! Transform obj.method(args) -> method(obj, args)
@@ -2289,9 +2503,13 @@ fn get_type_name(type_: &Type) -> String {
 fn lookup_method_for_type(state: &State, obj_type_name: &str, method_name: &str) -> bool {
 
     // Check all trait-type combinations in the trait_methods registry
-    for ((_trait_name, base_type), methods) in &state.symbols.trait_methods {
+    for ((trait_name, base_type), methods) in &state.symbols.trait_methods {
         // Check if this object type matches the base type and the method is in the trait
         if base_type == obj_type_name && methods.contains(&method_name.to_string()) {
+            return true;
+        }
+        // ALSO check if obj_type_name is a TRAIT name (for constrained type variables)
+        if trait_name == obj_type_name && methods.contains(&method_name.to_string()) {
             return true;
         }
     }
@@ -2749,8 +2967,10 @@ fn is_well_formed(context: &Context, type_: &Type) -> bool {
             .iter()
             .fold(true, |first, a| first && is_well_formed(context, &a.ty.0)),
         Type::FieldConstraint(_, ty) => is_well_formed(context, &ty.0),
-        Type::Quantification(alpha, a) => {
-            is_well_formed(&context.add(ContextElement::Variable(alpha.clone())), a)
+        Type::Quantification(alpha, constraint, a) => {
+            let ctx_with_var = context.add(ContextElement::Variable(alpha.clone()));
+            let constraint_ok = constraint.as_ref().map_or(true, |c| is_well_formed(&ctx_with_var, c));
+            constraint_ok && is_well_formed(&ctx_with_var, a)
         }
         Type::Existential(var) => context.has_existential(var) || context.get_solved(var).is_some(),
         Type::Intersection(a, b) => {
@@ -2788,8 +3008,9 @@ fn apply_context(a: Type, context: &Context) -> Type {
                 a
             }
         }
-        Type::Quantification(alpha, a) => {
-            Type::Quantification(alpha, Box::new(apply_context(*a, context)))
+        Type::Quantification(alpha, constraint, a) => {
+            let new_constraint = constraint.map(|c| Box::new(apply_context(*c, context)));
+            Type::Quantification(alpha, new_constraint, Box::new(apply_context(*a, context)))
         }
         Type::Func(args, rtn) => Type::Func(
             // args.into_iter()
@@ -2973,12 +3194,23 @@ pub fn check_program(program: &Program) -> Result<(), String> {
                         // Create context with generic parameters and function parameters  
                         let mut func_context = context.clone();
                         
-                        // Add generic type parameters if any
+                        // Add generic type parameters if any with their constraints
                         if let Some(generics) = &func.generics {
                             for generic_param in &generics.args {
                                 func_context = func_context.add(ContextElement::Variable(
                                     generic_param.name.clone()
                                 ));
+
+                                // Add constraint annotation if the generic has a constraint (not "type")
+                                if let Type::UniverseType = generic_param.ty.0 {
+                                    // No constraint
+                                } else {
+                                    // Has constraint
+                                    func_context = func_context.add(ContextElement::Annotation(
+                                        generic_param.name.clone(),
+                                        generic_param.ty.0.clone()
+                                    ));
+                                }
                             }
                         }
                         
@@ -3006,12 +3238,23 @@ pub fn check_program(program: &Program) -> Result<(), String> {
                         // Create context with generic parameters and function parameters  
                         let mut func_context = context.clone();
                         
-                        // Add generic type parameters if any
+                        // Add generic type parameters if any with their constraints
                         if let Some(generics) = &func.generics {
                             for generic_param in &generics.args {
                                 func_context = func_context.add(ContextElement::Variable(
                                     generic_param.name.clone()
                                 ));
+
+                                // Add constraint annotation if the generic has a constraint (not "type")
+                                if let Type::UniverseType = generic_param.ty.0 {
+                                    // No constraint
+                                } else {
+                                    // Has constraint
+                                    func_context = func_context.add(ContextElement::Annotation(
+                                        generic_param.name.clone(),
+                                        generic_param.ty.0.clone()
+                                    ));
+                                }
                             }
                         }
                         
@@ -5612,6 +5855,150 @@ def testNestedMultiParam(p: Pair[Pair[i32, bool], String]) -> i32 =
         }
     }
 
+    #[test]
+    fn test_cross_module_method_dispatch() {
+        use crate::ast::*;
+
+        // Module 1: Define type with enhancement
+        let lib_program = Program {
+            defs: vec![
+                Def::Type(DefType {
+                    name: ("Counter".to_string(), 0..7),
+                    generics: None,
+                    ty: (Type::FieldConstraint("value".to_string(), Box::new((Type::Literal(LiteralType::Int), 0..3))), 0..10),
+                    exported: true,
+                }),
+                Def::Open(Open {
+                    ty: (Type::Intersection(
+                        Box::new(Type::Ident(QualifiedType {
+                            path: vec![("Add".to_string(), 0..3)],
+                            type_args: vec![],
+                        })),
+                        Box::new(Type::Ident(QualifiedType {
+                            path: vec![("Counter".to_string(), 0..7)],
+                            type_args: vec![],
+                        })),
+                    ), 0..14),
+                    generics: None,
+                    exported: true,
+                }),
+                Def::Func(Func {
+                    ty: None,
+                    ident: "add".to_string(),
+                    args: vec![
+                        Item {
+                            name: "self".to_string(),
+                            ty: (Type::Ident(QualifiedType {
+                                path: vec![("Counter".to_string(), 0..7)],
+                                type_args: vec![],
+                            }), 0..7),
+                        },
+                        Item {
+                            name: "other".to_string(),
+                            ty: (Type::Ident(QualifiedType {
+                                path: vec![("Counter".to_string(), 0..7)],
+                                type_args: vec![],
+                            }), 0..7),
+                        },
+                    ],
+                    rtn: (Type::Ident(QualifiedType {
+                        path: vec![("Counter".to_string(), 0..7)],
+                        type_args: vec![],
+                    }), 0..7),
+                    generics: None,
+                    body: Box::new(AssignExpr::Expr(Box::new((
+                        Expr::Object(vec![
+                            (("value".to_string(), 0..5), (Expr::Literal(Literal::Nat(42)), 0..2)),
+                        ]),
+                        0..12
+                    )))),
+                    exported: true,
+                }),
+                Def::Close(Close {
+                    ty: (Type::Intersection(
+                        Box::new(Type::Ident(QualifiedType {
+                            path: vec![("Add".to_string(), 0..3)],
+                            type_args: vec![],
+                        })),
+                        Box::new(Type::Ident(QualifiedType {
+                            path: vec![("Counter".to_string(), 0..7)],
+                            type_args: vec![],
+                        })),
+                    ), 0..14),
+                }),
+            ],
+        };
+
+        // Module 2: Import and use method dispatch
+        let app_program = Program {
+            defs: vec![
+                Def::Import(ImportStatement::From(FromImport {
+                    module_path: vec!["lib".to_string()],
+                    items: vec!["Counter".to_string(), "add".to_string()],
+                })),
+                Def::Func(Func {
+                    ty: None,
+                    ident: "main".to_string(),
+                    args: vec![],
+                    rtn: (Type::Literal(LiteralType::Int), 0..3),
+                    generics: None,
+                    body: Box::new(AssignExpr::Expr(Box::new((
+                        Expr::Member(
+                            Box::new((
+                                Expr::Object(vec![
+                                    (("value".to_string(), 0..5), (Expr::Literal(Literal::Nat(10)), 0..2)),
+                                ]),
+                                0..12
+                            )),
+                            ("value".to_string(), 0..5),
+                        ),
+                        0..17
+                    )))),
+                    exported: false,
+                }),
+            ],
+        };
+
+        // Create registry with imported symbols including enhancement
+        let mut app_registry = ResolvedRegistry::new();
+
+        // Add Counter type
+        let counter_type = Type::Intersection(
+            Box::new(Type::Ident(QualifiedType {
+                path: vec![("Counter".to_string(), 0..7)],
+                type_args: vec![],
+            })),
+            Box::new(Type::FieldConstraint("value".to_string(), Box::new((Type::Literal(LiteralType::Int), 0..3)))),
+        );
+        app_registry.types.insert("Counter".to_string(), counter_type);
+
+        // Add enhancement (automatically included when importing Counter)
+        app_registry.enhancements.insert("Add^Counter".to_string());
+
+        // Add add function
+        let add_func_type = Type::Func(
+            Box::new((Type::Tuple(vec![
+                (Type::Ident(QualifiedType {
+                    path: vec![("Counter".to_string(), 0..7)],
+                    type_args: vec![],
+                }), 0..7),
+                (Type::Ident(QualifiedType {
+                    path: vec![("Counter".to_string(), 0..7)],
+                    type_args: vec![],
+                }), 0..7),
+            ]), 0..14)),
+            Box::new((Type::Ident(QualifiedType {
+                path: vec![("Counter".to_string(), 0..7)],
+                type_args: vec![],
+            }), 0..7)),
+        );
+        app_registry.functions.insert("add".to_string(), add_func_type);
+
+        // Test that cross-module method dispatch type checks
+        let result = check_program_with_imports(&app_program, &app_registry);
+        assert!(result.is_ok(), "Cross-module method dispatch should type check: {:?}", result);
+    }
+
     // === Comprehensive Method Dispatch Edge Case Tests ===
 
     #[test]
@@ -5835,5 +6222,422 @@ def test() -> String =
         let result = check_program(&ast);
         println!("Method dispatch structural compatibility test result: {:?}", result);
         assert!(result.is_ok(), "Method dispatch should work with structurally compatible object literals");
+    }
+
+    // ==================== TRAIT BOUNDS ON FUNCTIONS TESTS ====================
+
+    #[test]
+    fn test_basic_trait_bound() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+def sum(x: T, y: T) -> T for T: Add = x.add(y)
+
+def test() -> Number =
+    let n1 = Number(value = 5)
+    let n2 = Number(value = 3)
+    sum(n1, n2)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Basic trait bound test result: {:?}", result);
+        assert!(result.is_ok(), "Function with trait bound should type check");
+    }
+
+    #[test]
+    fn test_multiple_trait_bounds_intersection() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def trait Print for T: type = {
+    print: (T) -> String
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+open Print^Number
+def print(self: Number) -> String = "number"
+close Print^Number
+
+def processAndDisplay(x: T, y: T) -> String for T: Add^Print =
+    let sum = x.add(y)
+    sum.print()
+
+def test() -> String =
+    let n1 = Number(value = 5)
+    let n2 = Number(value = 3)
+    processAndDisplay(n1, n2)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Multiple trait bounds test result: {:?}", result);
+        assert!(result.is_ok(), "Function with multiple trait bounds should type check");
+    }
+
+    #[test]
+    fn test_trait_bound_with_builtin_types() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+open Add^i32
+def add(a: i32, b: i32) -> i32 = a + b
+close Add^i32
+
+def sum(x: T, y: T) -> T for T: Add = x.add(y)
+
+def test() -> i32 = sum(5, 3)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Trait bound with builtin types test result: {:?}", result);
+        assert!(result.is_ok(), "Trait bound should work with builtin types");
+    }
+
+    #[test]
+    fn test_nested_generic_with_constraints() {
+        let source = r#"
+def trait Multiply for T: type = {
+    multiply: (T, T) -> T
+}
+
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+open Multiply^Number
+def multiply(a: Number, b: Number) -> Number =
+    Number(value = a.value * b.value)
+close Multiply^Number
+
+def compute(a: T, b: T) -> T for T: Add^Multiply =
+    let sum = a.add(b)
+    sum.multiply(a)
+
+def test() -> Number =
+    let n1 = Number(value = 5)
+    let n2 = Number(value = 3)
+    compute(n1, n2)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Nested generic with constraints test result: {:?}", result);
+        assert!(result.is_ok(), "Nested generics with constraints should work");
+    }
+
+    #[test]
+    fn test_unconstrained_vs_constrained() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def identity(x: T) -> T for T: type = x
+
+def sum(x: T, y: T) -> T for T: Add = x.add(y)
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+def test() -> Number =
+    let n = Number(value = 5)
+    let id = identity(n)
+    sum(id, n)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Unconstrained vs constrained test result: {:?}", result);
+        assert!(result.is_ok(), "Unconstrained and constrained generics should coexist");
+    }
+
+    #[test]
+    fn test_constraint_with_enhanced_types() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def type Counter = {value: i32}
+
+open Add^Counter
+def add(a: Counter, b: Counter) -> Counter =
+    Counter(value = a.value + b.value)
+close Add^Counter
+
+def double(x: T) -> T for T: Add = x.add(x)
+
+def test() -> Counter =
+    let c = Counter(value = 5)
+    double(c)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Constraint with enhanced types test result: {:?}", result);
+        assert!(result.is_ok(), "Constraints should work with retroactively enhanced types");
+    }
+
+    #[test]
+    fn test_constraint_type_display() {
+        // Test that constrained quantified types display correctly
+        let constraint = Type::Ident(QualifiedType {
+            path: vec![("Add".to_string(), Span::default())],
+            type_args: vec![],
+        });
+
+        let func_type = Type::Func(
+            Box::new((Type::Ident(QualifiedType {
+                path: vec![("T".to_string(), Span::default())],
+                type_args: vec![],
+            }), Span::default())),
+            Box::new((Type::Ident(QualifiedType {
+                path: vec![("T".to_string(), Span::default())],
+                type_args: vec![],
+            }), Span::default())),
+        );
+
+        let quantified = Type::Quantification(
+            "T".to_string(),
+            Some(Box::new(constraint)),
+            Box::new(func_type)
+        );
+
+        let display = format!("{}", quantified);
+        assert!(display.contains("∀T: Add"), "Should display constraint: {}", display);
+    }
+
+    #[test]
+    fn test_multiple_generic_parameters_with_constraints() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def trait Show for T: type = {
+    show: (T) -> String
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+open Show^Number
+def show(self: Number) -> String = "num"
+close Show^Number
+
+def combine(a: T, b: U) -> T for T: Add, U: Show =
+    let msg = b.show()
+    a.add(a)
+
+def test() -> Number =
+    let n1 = Number(value = 5)
+    let n2 = Number(value = 3)
+    combine(n1, n2)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Multiple generic parameters with constraints test result: {:?}", result);
+        assert!(result.is_ok(), "Multiple generic parameters with different constraints should work");
+    }
+
+    #[test]
+    fn test_constraint_inheritance_through_intersection() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def trait Multiply for T: type = {
+    multiply: (T, T) -> T
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+open Multiply^Number
+def multiply(a: Number, b: Number) -> Number =
+    Number(value = a.value * b.value)
+close Multiply^Number
+
+def addTwice(x: T, y: T) -> T for T: Add =
+    let temp = x.add(y)
+    temp.add(y)
+
+def multiplyAndAdd(x: T, y: T) -> T for T: Add^Multiply =
+    let prod = x.multiply(y)
+    addTwice(prod, x)
+
+def test() -> Number =
+    let n1 = Number(value = 5)
+    let n2 = Number(value = 3)
+    multiplyAndAdd(n1, n2)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Constraint inheritance test result: {:?}", result);
+        assert!(result.is_ok(), "Constraint inheritance through intersection should work");
+    }
+
+    #[test]
+    fn test_chained_constrained_calls() {
+        let source = r#"
+def trait Add for T: type = {
+    add: (T, T) -> T
+}
+
+def type Number = {value: i32}
+
+open Add^Number
+def add(a: Number, b: Number) -> Number =
+    Number(value = a.value + b.value)
+close Add^Number
+
+def increment(x: T) -> T for T: Add = x.add(x)
+
+def quadruple(x: T) -> T for T: Add =
+    let doubled = increment(x)
+    increment(doubled)
+
+def test() -> Number =
+    let n = Number(value = 5)
+    quadruple(n)
+"#;
+
+        let (tts, _) = lexer().parse_recovery(source);
+        assert!(tts.is_some());
+
+        let tts = tts.unwrap();
+        let eoi = 0..source.chars().count();
+        let token_stream = tts_to_stream(eoi, tts);
+        let (result, errs) = program_parser().parse_recovery(token_stream);
+
+        assert!(errs.is_empty(), "Parser errors: {:?}", errs);
+        let ast = result.unwrap();
+
+        let result = check_program(&ast);
+        println!("Chained constrained calls test result: {:?}", result);
+        assert!(result.is_ok(), "Chained calls to constrained functions should work");
     }
 }

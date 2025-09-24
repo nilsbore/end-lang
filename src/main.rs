@@ -464,6 +464,13 @@ fn resolve_module_imports(
         for item in imported_items {
             if let Some(exported_type) = source_interface.exports.types.get(item) {
                 registry.types.insert(item.clone(), exported_type.clone());
+
+                // Automatically import all enhancements for this type
+                for enhancement in &source_interface.exports.enhancements {
+                    if enhancement.ends_with(&format!("^{}", item)) || enhancement.starts_with(&format!("{}^", item)) {
+                        registry.enhancements.insert(enhancement.clone());
+                    }
+                }
             }
             if let Some(exported_function) = source_interface.exports.functions.get(item) {
                 registry.functions.insert(item.clone(), exported_function.clone());

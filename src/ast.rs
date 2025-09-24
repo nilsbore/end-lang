@@ -133,7 +133,7 @@ pub enum Type {
     FieldConstraint(String, Box<Spanned<Self>>),  // {field: Type} constraint
     Func(Box<Spanned<Self>>, Box<Spanned<Self>>),
     Existential(String),               // unknown variable, to be decided!
-    Quantification(String, Box<Self>), // generics!! does the type tree end in existentials with the same name?
+    Quantification(String, Option<Box<Self>>, Box<Self>), // generics with optional constraint: ∀T: Constraint. Body
 }
 
 impl Type {
@@ -183,7 +183,13 @@ impl fmt::Display for Type {
             Type::Func(rtn, args) => write!(f, "({}) -> {}", rtn.0, args.0),
             Type::Literal(literal) => write!(f, "{}", literal),
             Type::Existential(ex) => write!(f, "{}^", ex),
-            Type::Quantification(a, ty) => write!(f, "(∀{}. {})", a, ty),
+            Type::Quantification(a, constraint, ty) => {
+                if let Some(c) = constraint {
+                    write!(f, "(∀{}: {}. {})", a, c, ty)
+                } else {
+                    write!(f, "(∀{}. {})", a, ty)
+                }
+            }
             Type::Intersection(a, b) => write!(f, "{}^{}", a, b),
         }
     }
